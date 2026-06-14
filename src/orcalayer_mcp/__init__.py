@@ -8,4 +8,4 @@ Claude Desktop.
 from .server import main, mcp
 
 __all__ = ["main", "mcp", "__version__"]
-__version__ = "0.1.0"
+__version__ = "0.1.1"

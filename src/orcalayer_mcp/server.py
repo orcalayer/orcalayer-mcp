@@ -14,6 +14,7 @@ Run it as ``orcalayer-mcp`` (console script) or ``python -m orcalayer_mcp``.
 from __future__ import annotations
 
 import os
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -32,8 +33,16 @@ mcp = FastMCP("orcalayer")
 # makes no network call and does not validate the key — so an anonymous start
 # and a bad-key start both come up cleanly; a wrong key only surfaces when a
 # Premium tool is actually called.
+try:
+    _MCP_VERSION = _pkg_version("orcalayer-mcp")
+except PackageNotFoundError:  # running from a source checkout without install
+    _MCP_VERSION = "dev"
+
 _API_KEY = os.environ.get("ORCALAYER_API_KEY") or None
-_client = OrcaLayer(api_key=_API_KEY)
+_client = OrcaLayer(
+    api_key=_API_KEY,
+    user_agent_suffix=f"orcalayer-mcp/{_MCP_VERSION}",
+)
 
 
 # ── error handling ───────────────────────────────────────────────────────────
