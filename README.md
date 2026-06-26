@@ -1,5 +1,9 @@
 # orcalayer-mcp
 
+[![PyPI](https://img.shields.io/pypi/v/orcalayer-mcp.svg)](https://pypi.org/project/orcalayer-mcp/)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![MCP](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io)
+
 Model Context Protocol (MCP) server for the [OrcaLayer API](https://orcalayer.com) —
 Polymarket whale and market analytics inside Claude Desktop and other MCP clients.
 
@@ -17,6 +21,30 @@ Python SDK and exposes five tools:
 Public tools work anonymously. `whale_alerts` needs a Premium API key
 ([get one](https://orcalayer.com/pricing)) supplied via the
 `ORCALAYER_API_KEY` environment variable.
+
+## Prompts
+
+Ready-to-use prompts for common analytics scenarios:
+
+| Prompt | What it does |
+|---|---|
+| `analyze_wallet` | Full wallet analysis — smart money or farmer? |
+| `find_divergence` | Markets where smart money disagrees with the current price |
+| `hedge_check` | Whether a wallet's profit was real alpha or a hedge structure |
+| `territorial_markets_review` | Ukraine territorial markets with ISW frontline overlay |
+
+In Claude Desktop, pick a prompt from the prompt menu (the `+` / slash-command
+picker) — each one orchestrates the tools above for you.
+
+## Resources
+
+Read-only context the model can pull directly — no tool call needed:
+
+| Resource URI | Content |
+|---|---|
+| `orcalayer://methodology` | How smart money is filtered from farmers, hedgers and market-makers |
+| `orcalayer://glossary` | Prediction-markets glossary |
+| `orcalayer://api-reference` | OrcaLayer REST API reference (endpoints, auth, rate limits) |
 
 ## Use with Claude Desktop
 

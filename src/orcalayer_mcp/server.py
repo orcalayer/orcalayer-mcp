@@ -27,7 +27,17 @@ from orcalayer import (
     WalletComputingError,
 )
 
-mcp = FastMCP("orcalayer")
+mcp = FastMCP(
+    "orcalayer",
+    instructions=(
+        "OrcaLayer exposes Polymarket smart-money analytics. Tools: rank profitable "
+        "whales (leaderboard), inspect a wallet's profile and positions "
+        "(wallet_overview, wallet_positions), search markets where smart money is "
+        "clustering (markets), and stream recent whale trades (whale_alerts, Premium). "
+        "Prompts give ready-made analyses; resources hold the classification "
+        "methodology, a glossary and the REST API reference."
+    ),
+)
 
 # A single shared client for the process. The SDK constructor is cheap — it
 # makes no network call and does not validate the key — so an anonymous start
@@ -318,6 +328,193 @@ def whale_alerts(
         )
     except OrcaLayerError as exc:
         raise _real_failure(exc)
+
+
+# ── prompts ──────────────────────────────────────────────────────────────────
+# Ready-made analyses an agent can run. Each returns an instruction template that
+# drives the tools above; FastMCP derives the prompt arguments from the signature.
+
+@mcp.prompt(description="Analyze a Polymarket wallet — smart money or farmer?")
+def analyze_wallet(address: str) -> str:
+    return (
+        f"Analyze the Polymarket wallet {address}.\n"
+        "1. Call wallet_overview to get its profile and performance.\n"
+        "2. Call wallet_positions for its largest open positions.\n"
+        "3. Judge whether it is smart money or shows farmer / hedger patterns — "
+        "weigh market win rate, average entry price, the is_smart flag and profit "
+        "factor.\n"
+        "4. Conclude: is this a trustworthy directional signal, or noise?"
+    )
+
+
+@mcp.prompt(description="Find markets where smart money disagrees with the current price")
+def find_divergence(category: str = "", min_pp: str = "") -> str:
+    cat = f" in the {category} category" if category else ""
+    pp = min_pp or "10"
+    return (
+        f"Find Polymarket markets{cat} where smart-money positioning diverges from "
+        f"the current YES price by at least {pp} percentage points.\n"
+        "1. Call markets (optionally with category and min_whales) to list markets "
+        "with heavy smart-whale interest.\n"
+        "2. For each, compare the YES price to the smart-whale YES/NO split.\n"
+        "3. Surface the markets where the crowd price and the smart-money lean "
+        "disagree most, and explain the disagreement."
+    )
+
+
+@mcp.prompt(description="Check if a wallet's recent profit was real alpha or a hedge structure")
+def hedge_check(address: str, market_id: str = "") -> str:
+    scope = f", focusing on market {market_id}" if market_id else ""
+    return (
+        f"Assess whether the recent profit of Polymarket wallet {address} is genuine "
+        f"directional alpha or an artifact of hedging / market-making{scope}.\n"
+        "1. Call wallet_overview for performance, profit factor and category mix.\n"
+        "2. Call wallet_positions and look for paired opposite-side positions in the "
+        "same or correlated markets (a hallmark of hedging).\n"
+        "3. Consider whether wins come from a few resolved markets or broad "
+        "consistency.\n"
+        "4. Conclude: real edge, or a hedge / MM structure that won't transfer to "
+        "copy-trading?"
+    )
+
+
+@mcp.prompt(description="Review Ukraine territorial markets with ISW frontline overlay")
+def territorial_markets_review(threat_level: str = "") -> str:
+    lvl = (
+        f" Prioritise markets at {threat_level} proximity to the front line."
+        if threat_level
+        else ""
+    )
+    return (
+        "Review the Polymarket Ukraine territorial-control markets against the ISW "
+        "(Institute for the Study of War) frontline picture.\n"
+        "1. Call markets with category=\"Geopolitics\" to list active Ukraine "
+        "territory markets.\n"
+        "2. For each, weigh the current YES price against the real frontline "
+        "situation and smart-money positioning." + lvl + "\n"
+        "3. Flag markets where the price looks mispriced versus the ground truth."
+    )
+
+
+# ── resources ────────────────────────────────────────────────────────────────
+# Read-only context an agent can pull without a tool call. Hardcoded so a reader
+# never depends on a live fetch; the canonical long-form lives on orcalayer.com.
+
+_METHODOLOGY = """# OrcaLayer classification methodology
+
+OrcaLayer reads every Polymarket trade directly from the Polygon blockchain
+(1.2B+ on-chain fills across ~1.39M markets) and classifies the wallets behind
+them.
+
+## Smart money
+A wallet is flagged **smart money** only when ALL of these hold:
+- win rate >= 55% measured **by resolved markets** (not by individual trades),
+- positive lifetime realized P&L,
+- not flagged as a farmer or bot,
+- at least 10 resolved markets of history.
+About 208K of ~1.42M tracked wallets qualify.
+
+## Farmer filter
+A farmer's fingerprint is an average buy price above ~95c: such an average
+cannot be accumulated by taking real uncertain positions, and it manufactures
+"flawless" 95-100% win rates on near-decided markets. ~16% of high-P&L wallets
+are farmers. Bots (very high trade counts at tiny average size) and protocol
+router contracts are excluded separately.
+
+## NegRisk correction
+On linked multi-outcome (NegRisk) markets, resolved P&L is divided by 2 and
+split/merge flows are attributed correctly, removing double-counting so win
+rates stay honest.
+
+## P&L method
+Per-wallet, per-market FIFO (first-in, first-out), so profit reflects the real
+sequence of entries and exits.
+
+Full version: https://orcalayer.com/methodology
+"""
+
+_GLOSSARY = """# Prediction-markets glossary (OrcaLayer)
+
+- **Smart money** — wallet with >=55% market win rate, positive P&L, not a
+  farmer/bot, 10+ resolved markets. The signal OrcaLayer tracks.
+- **Farmer** — wallet whose average buy price is above ~95c; inflates win rate by
+  buying near-decided markets. Excluded from smart-money stats.
+- **Hedger** — holds offsetting positions on both sides; apparent "profit" can be
+  a structure rather than directional edge.
+- **Market maker (MM)** — provides liquidity on both sides; P&L is spread capture,
+  not a directional call.
+- **NegRisk** — Polymarket's linked multi-outcome markets; resolved P&L is halved
+  and split/merge flows attributed, to avoid double-counting.
+- **FIFO P&L** — first-in, first-out realized profit, per wallet per market.
+- **Profit factor** — gross wins divided by gross losses.
+- **Alignment / consensus** — how strongly smart money agrees on one side of a
+  market.
+- **ISW** — Institute for the Study of War; its daily frontline maps are the
+  oracle Polymarket uses to resolve Ukraine territorial markets, surfaced in
+  OrcaLayer's Territory monitor.
+- **Resolved market** — a market that has settled to a final outcome; win rate is
+  computed over these.
+"""
+
+_API_REFERENCE = """# OrcaLayer public REST API
+
+Base: https://orcalayer.com
+- Public read endpoints: /api/v2/* (no key)
+- Premium endpoints: /api/public/v1/* (Bearer or x-api-key)
+
+## Auth
+Send a Premium key as `Authorization: Bearer <key>` or `x-api-key: <key>`. Public
+read endpoints (wallet profiles, market search, leaderboard) need no key.
+
+## Rate limits
+- Anonymous public: 200 requests/minute per IP (plus Cloudflare throttling).
+- Premium API key: 600 requests/minute (sliding 60s window, no daily cap).
+Every response carries X-RateLimit-* headers.
+
+## Real-time feed
+Server-Sent Events (SSE) at /api/public/v1/live/trades (Premium) streams each
+smart-money trade as it lands — a long-lived EventSource connection, one JSON
+event per trade. (It is SSE, not WebSocket.)
+
+## Selected endpoints
+- GET /api/v2/whales/leaderboard — ranked smart whales
+- GET /api/v2/wallet/{address} — wallet profile + stats
+- GET /api/v2/wallet/{address}/positions — open positions
+- GET /api/v2/markets/search — market search
+- GET /api/public/v1/whale-alerts — recent whale trades (Premium)
+
+Full docs: https://orcalayer.com/docs/api
+"""
+
+
+@mcp.resource(
+    "orcalayer://methodology",
+    name="OrcaLayer Methodology",
+    description="How smart money is filtered from farmers, hedgers and market-makers.",
+    mime_type="text/markdown",
+)
+def methodology_resource() -> str:
+    return _METHODOLOGY
+
+
+@mcp.resource(
+    "orcalayer://glossary",
+    name="Prediction Markets Glossary",
+    description="Terms used in Polymarket analytics: hedge, farmer, NegRisk, smart money, ISW.",
+    mime_type="text/markdown",
+)
+def glossary_resource() -> str:
+    return _GLOSSARY
+
+
+@mcp.resource(
+    "orcalayer://api-reference",
+    name="OrcaLayer REST API Reference",
+    description="Public endpoints, authentication, rate limits and the SSE live feed.",
+    mime_type="text/markdown",
+)
+def api_reference_resource() -> str:
+    return _API_REFERENCE
 
 
 # ── entry point ──────────────────────────────────────────────────────────────
