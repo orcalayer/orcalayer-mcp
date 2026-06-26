@@ -4,6 +4,7 @@
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io)
 [![MCP Badge](https://lobehub.com/badge/mcp/orcalayer-orcalayer-mcp)](https://lobehub.com/mcp/orcalayer-orcalayer-mcp)
+[![Glama MCP](https://glama.ai/mcp/servers/orcalayer/orcalayer-mcp/badges/score.svg)](https://glama.ai/mcp/servers/orcalayer/orcalayer-mcp)
 
 Model Context Protocol (MCP) server for the [OrcaLayer API](https://orcalayer.com) —
 Polymarket whale and market analytics inside Claude Desktop and other MCP clients.
