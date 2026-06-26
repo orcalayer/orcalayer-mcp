@@ -1,0 +1,22 @@
+# Smithery configuration for orcalayer-mcp
+# https://smithery.ai/docs
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      orcalayerApiKey:
+        type: string
+        description: "Optional Premium API key from orcalayer.com/pricing (enables the whale_alerts tool)"
+  commandFunction: |-
+    (config) => {
+      const env = {};
+      if (config.orcalayerApiKey) {
+        env.ORCALAYER_API_KEY = config.orcalayerApiKey;
+      }
+      return {
+        command: "uvx",
+        args: ["orcalayer-mcp"],
+        env
+      };
+    }
