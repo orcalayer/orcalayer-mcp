@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/orcalayer-mcp.svg)](https://pypi.org/project/orcalayer-mcp/)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io)
-[![LobeHub](https://img.shields.io/badge/LobeHub-listed-7B68EE.svg)](https://lobehub.com/mcp/orcalayer-orcalayer-mcp)
+[![MCP Badge](https://lobehub.com/badge/mcp/orcalayer-orcalayer-mcp)](https://lobehub.com/mcp/orcalayer-orcalayer-mcp)
 
 Model Context Protocol (MCP) server for the [OrcaLayer API](https://orcalayer.com) —
 Polymarket whale and market analytics inside Claude Desktop and other MCP clients.
