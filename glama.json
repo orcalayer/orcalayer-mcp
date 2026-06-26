@@ -1,0 +1,33 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": [
+    "ekocam"
+  ],
+  "categories": [
+    "Finance",
+    "Blockchain",
+    "Cryptocurrency",
+    "Data Analytics"
+  ],
+  "tags": [
+    "polymarket",
+    "prediction-markets",
+    "whale-tracking",
+    "smart-money",
+    "polygon",
+    "on-chain-analytics",
+    "isw",
+    "ukraine"
+  ],
+  "homepage": "https://orcalayer.com",
+  "methodology": "https://orcalayer.com/methodology",
+  "documentation": "https://orcalayer.com/developers",
+  "license": "MIT",
+  "language": "Python",
+  "deployment": "stdio",
+  "install": {
+    "uvx": "uvx orcalayer-mcp",
+    "pip": "pip install orcalayer-mcp",
+    "pipx": "pipx install orcalayer-mcp"
+  }
+}
