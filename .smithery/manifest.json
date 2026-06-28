@@ -1,0 +1,51 @@
+{
+  "manifest_version": "0.2",
+  "name": "orcalayer-mcp",
+  "display_name": "OrcaLayer",
+  "version": "0.2.0",
+  "description": "MCP server for the OrcaLayer API — Polymarket whale and market analytics for Claude and other MCP clients",
+  "long_description": "OrcaLayer exposes Polymarket smart-money analytics over MCP. Rank profitable whales, inspect any wallet's profile and open positions, search markets where smart money is clustering, and stream recent whale trades (Premium). Built on 1.2B+ on-chain Polygon fills with farmer/hedger filtering, NegRisk correction and FIFO P&L. Four public tools work anonymously; whale_alerts needs a Premium API key.",
+  "author": {
+    "name": "OrcaLayer",
+    "url": "https://orcalayer.com"
+  },
+  "homepage": "https://orcalayer.com",
+  "documentation": "https://orcalayer.com/docs",
+  "support": "https://orcalayer.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/orcalayer/orcalayer-mcp"
+  },
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "polymarket",
+    "prediction-markets",
+    "whales",
+    "analytics",
+    "claude"
+  ],
+  "server": {
+    "type": "python",
+    "entry_point": "orcalayer_mcp.server:main",
+    "mcp_config": {
+      "command": "uvx",
+      "args": [
+        "orcalayer-mcp"
+      ],
+      "env": {
+        "ORCALAYER_API_KEY": "${user_config.api_key}"
+      }
+    }
+  },
+  "user_config": {
+    "api_key": {
+      "type": "string",
+      "title": "OrcaLayer API Key",
+      "description": "Optional Premium API key from orcalayer.com/pricing (enables the whale_alerts tool). Public tools work without it.",
+      "sensitive": true,
+      "required": false
+    }
+  }
+}
