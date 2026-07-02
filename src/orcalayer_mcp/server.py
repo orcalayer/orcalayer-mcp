@@ -101,6 +101,7 @@ def leaderboard(
         filter: "smart" (curated profitable whales, default) or "all".
         limit: How many whales to return (1–100).
     """
+    limit = max(1, min(limit, 100))
     try:
         return _client.leaderboard(
             sort=sort, category=category, filter=filter, limit=limit
@@ -265,6 +266,7 @@ def markets(
         min_whales: Minimum number of smart whales active in the market.
         limit: How many markets to return (1–100).
     """
+    limit = max(1, min(limit, 100))
     try:
         return _client.markets(
             q,
@@ -310,6 +312,7 @@ def whale_alerts(
             "ORCALAYER_API_KEY environment variable for this MCP server."
         )
 
+    limit = max(1, min(limit, 100))
     try:
         return _client.whale_alerts(
             minutes=minutes, min_usd=min_usd, category=category, limit=limit

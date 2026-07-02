@@ -38,7 +38,7 @@ jobs:
 
       - name: Verify MCP tools list
         run: |
-          python - <<'PY' || echo 'Tool list check needs manual verification'
+          python - <<'PY'
           import asyncio
           from orcalayer_mcp import mcp
 
@@ -60,4 +60,4 @@ jobs:
       - name: Install ruff
         run: pip install ruff
       - name: Run ruff
-        run: ruff check src/ || true
+        run: ruff check src/
