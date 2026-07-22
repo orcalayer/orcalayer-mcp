@@ -479,6 +479,21 @@ Server-Sent Events (SSE) at /api/public/v1/live/trades (Premium) streams each
 smart-money trade as it lands — a long-lived EventSource connection, one JSON
 event per trade. (It is SSE, not WebSocket.)
 
+Since 2026-07-22 every event also carries `settlement_type`
+("MINT" | "MERGE" | "COMPLEMENTARY" | null) — the settlement mechanics of the
+CLOB match, derived live by transaction-grouping ~60-120s before the trade
+appears on-chain (shadow-verified: 100.000% accurate on MINT/MERGE, coverage
+91.8%). Read it as mechanics, NOT trader intent: MINT means the order matched
+an opposite-side buyer (no seller was in the book), not that the wallet
+deliberately split collateral; ~80% of all fills settle as MINT. The label is
+tx-level (all fills of one match share it); COMPLEMENTARY means the tx
+contains a complementary component; null is an honest refusal (lone fill at
+the buffer edge or a complex batch) — never read null as "not a mint".
+A second stream, /api/public/v1/live/trades-indexed (Premium), delivers
+per-fill `entry_type` from on-chain data 20-45s later with a server-side
+?types=mint,merge filter — use it when per-fill fidelity matters more than
+speed.
+
 ## Selected endpoints
 - GET /api/v2/whales/leaderboard — ranked smart whales
 - GET /api/v2/wallet/{address} — wallet profile + stats

@@ -25,6 +25,14 @@ Public tools work anonymously. `whale_alerts` needs a Premium API key
 ([get one](https://orcalayer.com/pricing)) supplied via the
 `ORCALAYER_API_KEY` environment variable.
 
+> **New (2026-07-22):** the Premium SSE stream (`/api/public/v1/live/trades`)
+> now carries `settlement_type` (`MINT` / `MERGE` / `COMPLEMENTARY` / `null`)
+> on every event — live-derived settlement mechanics, shadow-verified
+> **100.000% accurate on MINT/MERGE**. It describes how the match settled,
+> **not trader intent** (~80% of all fills settle as MINT; `null` = honest
+> refusal, not "not a mint"). Details: the `orcalayer://api-reference`
+> resource or [orcalayer.com/docs/api](https://orcalayer.com/docs/api).
+
 ## Prompts
 
 Ready-to-use prompts for common analytics scenarios:
