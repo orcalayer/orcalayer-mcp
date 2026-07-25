@@ -83,7 +83,7 @@ API key ([get one](https://orcalayer.com/pricing)):
     "orcalayer": {
       "command": "uvx",
       "args": ["orcalayer-mcp"],
-      "env": { "ORCALAYER_API_KEY": "ol_your_key" }
+      "env": { "ORCALAYER_API_KEY": "sk_orca_your_key_here" }
     }
   }
 }
