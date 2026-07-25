@@ -58,6 +58,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install ruff
-        run: pip install ruff
+        # pinned: an unpinned ruff release broke main on a README-only push (25.07)
+        run: pip install 'ruff==0.14.*'
       - name: Run ruff
         run: ruff check src/
