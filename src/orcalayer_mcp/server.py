@@ -5,8 +5,9 @@ SDK. It does not reimplement any API logic — every tool delegates to the SDK
 and shapes the result for an LLM agent.
 
 Public tools (``leaderboard``, ``wallet_overview``, ``wallet_positions``,
-``markets``) work anonymously. ``whale_alerts`` is Premium and needs an API
-key supplied via the ``ORCALAYER_API_KEY`` environment variable.
+``markets``, ``market_consensus``) work anonymously. ``whale_alerts`` is
+Premium and needs an API key supplied via the ``ORCALAYER_API_KEY``
+environment variable.
 
 Run it as ``orcalayer-mcp`` (console script) or ``python -m orcalayer_mcp``.
 """
@@ -33,9 +34,10 @@ mcp = FastMCP(
         "OrcaLayer exposes Polymarket smart-money analytics. Tools: rank profitable "
         "whales (leaderboard), inspect a wallet's profile and positions "
         "(wallet_overview, wallet_positions), search markets where smart money is "
-        "clustering (markets), and stream recent whale trades (whale_alerts, Premium). "
-        "Prompts give ready-made analyses; resources hold the classification "
-        "methodology, a glossary and the REST API reference."
+        "clustering (markets), read the smart-money consensus on one market versus "
+        "its price (market_consensus), and stream recent whale trades "
+        "(whale_alerts, Premium). Prompts give ready-made analyses; resources hold "
+        "the classification methodology, a glossary and the REST API reference."
     ),
 )
 
@@ -114,9 +116,11 @@ def leaderboard(
 def wallet_overview(address: str) -> dict:
     """Summarize one wallet's trading profile and performance.
 
-    Accepts a 0x wallet address or an OrcaLayer nickname. Returns a compact
-    summary — identity, lifetime activity, and P&L stats — rather than the
-    full raw record, so it stays readable for heavy wallets.
+    Wallet profit tracking for any Polymarket address: lifetime P&L, win
+    rate, ROI-style stats (profit factor), volume and activity. Accepts a 0x
+    wallet address or an OrcaLayer nickname. Returns a compact summary —
+    identity, lifetime activity, and P&L stats — rather than the full raw
+    record, so it stays readable for heavy wallets.
 
     If the wallet's stats are still being computed server-side, this returns
     a ``{"status": "computing", "retry_after_seconds": N}`` notice instead of
@@ -254,9 +258,10 @@ def markets(
 ) -> dict:
     """Search Polymarket markets, optionally where smart whales are clustering.
 
-    Use this to find markets by topic and surface ones with heavy smart-money
-    interest. Returns each market's question, YES price, smart-whale counts on
-    each side, volume and days left.
+    Use this to track smart money flows: find markets by topic and surface
+    where smart money is accumulating right now. Returns each market's
+    question, YES price, smart-whale counts on each side, volume and days
+    left.
 
     Args:
         q: Free-text query; also accepts a Polymarket URL or slug. "" browses.
@@ -279,6 +284,102 @@ def markets(
         raise _real_failure(exc)
 
 
+@mcp.tool()
+def market_consensus(market: str) -> dict:
+    """Smart-money consensus on one Polymarket market versus its current price.
+
+    Shows where smart money stands on a market: how many profitable
+    smart-money whales hold YES vs NO, how much capital each side has
+    invested, the current market price, and the divergence between
+    smart-money positioning and that price. Use it to answer "what does
+    smart money think about this market?" and to spot markets where smart
+    money disagrees with the crowd.
+
+    Two consensus reads are returned side by side and can disagree:
+    ``head_count`` (one whale = one vote) and ``capital_weighted`` (dollars
+    invested per side). Head-count is the weaker signal — a $5 wallet counts
+    the same as a $500K one — so when the two disagree, trust the capital
+    split more. On cheap longshots (YES under ~15 cents) head-count skews
+    YES structurally. Divergence from price is positioning information, not
+    proof the market is mispriced; never present it as "the market is wrong".
+
+    Args:
+        market: Market id, Polymarket slug or URL, or 0x condition id.
+    """
+    # Accept a full Polymarket URL by reducing it to its slug.
+    m = market.strip()
+    if m.startswith("http"):
+        m = m.rstrip("/").rsplit("/", 1)[-1]
+    try:
+        data = _client.market(m)
+    except OrcaLayerError as exc:
+        raise _real_failure(exc)
+
+    mkt = data.get("market", {}) or {}
+    whales = data.get("whales", {}) or {}
+    price_yes = mkt.get("price_yes")
+
+    smart_yes = float(data.get("yes_team_total_invested") or 0)
+    smart_no = float(data.get("no_team_total_invested") or 0)
+    all_yes = float(data.get("yes_team_size_total_invested") or 0)
+    all_no = float(data.get("no_team_size_total_invested") or 0)
+
+    def _pct(a: float, b: float) -> float | None:
+        return round(100.0 * a / (a + b), 1) if (a + b) > 0 else None
+
+    head_yes_pct = whales.get("yes_pct")
+    cap_yes_pct = _pct(smart_yes, smart_no)
+    price_pct = round(price_yes * 100, 1) if price_yes is not None else None
+
+    return {
+        "market": {
+            "id": mkt.get("id"),
+            "question": mkt.get("question"),
+            "slug": mkt.get("slug"),
+            "condition_id": mkt.get("condition_id"),
+            "price_yes": price_yes,
+            "price_no": mkt.get("price_no"),
+            "volume": mkt.get("volume"),
+            "end_date": mkt.get("end_date"),
+            "closed": bool(mkt.get("closed")),
+        },
+        "head_count": {
+            "yes_whales": whales.get("yes"),
+            "no_whales": whales.get("no"),
+            "total": whales.get("total"),
+            "yes_pct": head_yes_pct,
+        },
+        "capital_weighted": {
+            "smart_yes_invested_usd": round(smart_yes, 2),
+            "smart_no_invested_usd": round(smart_no, 2),
+            "smart_yes_pct": cap_yes_pct,
+            "all_whales_yes_invested_usd": round(all_yes, 2),
+            "all_whales_no_invested_usd": round(all_no, 2),
+            "all_whales_yes_pct": _pct(all_yes, all_no),
+        },
+        "divergence_pp": {
+            "head_count_vs_price": (
+                round(head_yes_pct - price_pct, 1)
+                if head_yes_pct is not None and price_pct is not None
+                else None
+            ),
+            "capital_vs_price": (
+                round(cap_yes_pct - price_pct, 1)
+                if cap_yes_pct is not None and price_pct is not None
+                else None
+            ),
+        },
+        "last_24h": data.get("smart_money_24h"),
+        "caveats": (
+            "Head-count consensus is a weak signal: a $5 wallet counts the "
+            "same as a $500K one. Prefer the capital-weighted split when the "
+            "two disagree. On cheap longshots (YES < ~15c) head-count skews "
+            "YES structurally. Divergence from price is positioning "
+            "information, not proof the market is mispriced."
+        ),
+    }
+
+
 # ── premium tool ─────────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -288,10 +389,12 @@ def whale_alerts(
     category: str | None = None,
     limit: int = 25,
 ) -> Any:
-    """Recent trades by smart-money whales — a live alerts feed (Premium).
+    """Recent trades by smart-money whales — real-time alerts on profitable
+    wallets (Premium).
 
     Returns whale trades in the last ``minutes`` over ``min_usd`` in size:
-    who traded, buy/sell, side, amount, price and the market.
+    who traded, buy/sell, side, amount, price and the market. Use it to get
+    alerts when profitable Polymarket wallets open or close positions.
 
     Requires a Premium API key set via the ORCALAYER_API_KEY environment
     variable. Without a key this returns a short notice on how to get one (it

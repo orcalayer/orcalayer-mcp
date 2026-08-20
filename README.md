@@ -11,15 +11,16 @@ Model Context Protocol (MCP) server for the [OrcaLayer API](https://orcalayer.co
 Polymarket whale and market analytics inside Claude Desktop and other MCP clients.
 
 It is a thin stdio wrapper over the [`orcalayer`](https://pypi.org/project/orcalayer/)
-Python SDK and exposes five tools:
+Python SDK and exposes six tools:
 
 | Tool | What it does | Key |
 |---|---|---|
 | `leaderboard` | Rank smart-money whales by P&L, win rate or volume | No |
-| `wallet_overview` | A wallet's profile and performance summary | No |
+| `wallet_overview` | Wallet profit tracking: profile, P&L and win-rate summary | No |
 | `wallet_positions` | A wallet's largest open positions | No |
-| `markets` | Search markets where smart whales are clustering | No |
-| `whale_alerts` | Live feed of recent smart-whale trades | Premium |
+| `markets` | Track smart money flows: search markets where smart whales are accumulating | No |
+| `market_consensus` | Smart-money consensus on one market vs its price (head-count + capital-weighted) | No |
+| `whale_alerts` | Real-time alerts on profitable wallets: live feed of smart-whale trades | Premium |
 
 Public tools work anonymously. `whale_alerts` needs a Premium API key
 ([get one](https://orcalayer.com/pricing)) supplied via the
