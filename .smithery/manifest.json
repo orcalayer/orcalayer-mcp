@@ -2,7 +2,7 @@
   "manifest_version": "0.2",
   "name": "orcalayer-mcp",
   "display_name": "OrcaLayer",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "MCP server for the OrcaLayer API — Polymarket whale and market analytics for Claude and other MCP clients",
   "long_description": "OrcaLayer exposes Polymarket smart-money analytics over MCP. Rank profitable whales, track wallet profit (P&L and win rate), search markets where smart money is accumulating, read the smart-money consensus on one market versus its price (head-count and capital-weighted), and get real-time alerts on profitable wallets (Premium). Built on 1.2B+ on-chain Polygon fills with farmer/hedger filtering, NegRisk correction and FIFO P&L. Five public tools work anonymously; whale_alerts needs a Premium API key.",
   "author": {

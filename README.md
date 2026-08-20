@@ -97,3 +97,7 @@ Restart Claude Desktop after editing the config.
 MIT. See [LICENSE](LICENSE).
 
 Data is provided for informational purposes only and is not financial advice.
+
+---
+
+mcp-name: io.github.orcalayer/orcalayer-mcp
