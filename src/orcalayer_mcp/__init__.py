@@ -5,7 +5,7 @@ Polymarket whale and market analytics as MCP tools for clients such as
 Claude Desktop.
 """
 
+from .server import _MCP_VERSION as __version__  # single source: package metadata
 from .server import main, mcp
 
 __all__ = ["main", "mcp", "__version__"]
-__version__ = "0.2.1"

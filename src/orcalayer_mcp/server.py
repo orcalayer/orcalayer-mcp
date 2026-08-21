@@ -50,6 +50,12 @@ try:
 except PackageNotFoundError:  # running from a source checkout without install
     _MCP_VERSION = "dev"
 
+# serverInfo.version in the MCP initialize handshake. FastMCP does not take a
+# version argument and the low-level Server falls back to the SDK's own
+# package version, so clients and directories saw "1.29.0" (the mcp SDK) next
+# to package 0.3.1 (seen in Glama's instance logs, 21.08.2026). Report ours.
+mcp._mcp_server.version = _MCP_VERSION
+
 _API_KEY = os.environ.get("ORCALAYER_API_KEY") or None
 _client = OrcaLayer(
     api_key=_API_KEY,
