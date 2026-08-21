@@ -1,14 +1,14 @@
 # orcalayer-mcp — stdio MCP server for Polymarket smart-money analytics.
 #
-# Why this file exists (21.08.2026): directories such as Glama build the server
-# from a Dockerfile to run tools/list in a sandbox and fill their Tools index.
-# Without one they infer a Dockerfile heuristically; that inference stopped
-# producing a working build after v0.3.x and the index froze at 5 tools
-# (market_consensus missing). A committed Dockerfile makes the build
-# deterministic and re-runs on every commit.
+# A plain, reproducible container build for anyone who wants to run the server
+# without uv/pip on the host. Note: Glama does NOT read this file — it generates
+# its own Dockerfile from Admin -> Dockerfile -> Configuration (debian:trixie-slim
+# + uv sync); this one is for self-hosting and for directories that do build
+# from the repository.
 #
 # The server starts without any environment variable; ORCALAYER_API_KEY is
-# optional and only unlocks the premium whale_alerts tool.
+# optional and only unlocks the premium whale_alerts tool. Verified 21.08.2026:
+# image builds, initialize + tools/list answer with all six tools.
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
