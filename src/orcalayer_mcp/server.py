@@ -710,7 +710,7 @@ def whale_alerts(
 
     limit = max(1, min(limit, 100))
     try:
-        return _client_for(key).whale_alerts(
+        data = _client_for(key).whale_alerts(
             minutes=minutes, min_usd=min_usd, category=category, limit=limit
         )
     except AuthenticationError as exc:
@@ -727,6 +727,44 @@ def whale_alerts(
         )
     except OrcaLayerError as exc:
         raise _real_failure(exc)
+
+    # 0.5.3: same naming rules as the other tools. The whale's `win_rate` here
+    # is the leaderboard's stored figure, not market_win_rate, so it is renamed;
+    # each alert gets an ISO time next to its unix timestamp (live data, the
+    # history-table date issue does not apply).
+    if not isinstance(data, dict) or not isinstance(data.get("alerts"), list):
+        return data
+    alerts = []
+    for a in data["alerts"]:
+        if not isinstance(a, dict):
+            alerts.append(a)
+            continue
+        a = dict(a)
+        whale = a.get("whale")
+        if isinstance(whale, dict) and "win_rate" in whale:
+            whale = dict(whale)
+            whale["leaderboard_win_rate"] = whale.pop("win_rate")
+            a["whale"] = whale
+        ts = _num(a.get("timestamp"))
+        if ts:
+            a["time_utc"] = datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        alerts.append(a)
+    return {
+        "alerts": alerts,
+        "count": data.get("count", len(alerts)),
+        "params": data.get("params"),
+        "notes": {
+            "whale": (
+                "whale.leaderboard_win_rate is the leaderboard's stored win rate, a different basis from "
+                "market_win_rate in the leaderboard and wallet_overview tools; whale.total_pnl is the lifetime "
+                "P&L as Polymarket reports it; whale.is_smart: the wallet is in " + _SMART_SET + "."
+            ),
+            "trade": (
+                "trade.action BUY/SELL and side YES/NO of the fill, price per share (0-1), usd_amount; "
+                "trade.position_now is the wallet's position on that market after the trade."
+            ),
+        },
+    }
 
 
 # ── prompts ──────────────────────────────────────────────────────────────────
