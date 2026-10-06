@@ -73,9 +73,13 @@ mcp._mcp_server.version = _MCP_VERSION
 # from outside the client (openWorldHint). The directory review requires a
 # title and a readOnlyHint on each tool, and Claude uses readOnlyHint to run
 # the tool without a per-call confirmation.
-_READ_ONLY = ToolAnnotations(
-    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True
-)
+def _read_only(title: str) -> ToolAnnotations:
+    """Annotations for a read-only tool. 0.5.4: the title goes inside the
+    annotations as well (annotations.title): the Anthropic directory portal reads
+    it from there and flagged all six tools while only the tool-level title was set."""
+    return ToolAnnotations(
+        title=title, readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True
+    )
 
 # ── API clients ──────────────────────────────────────────────────────────────
 # 0.4.0: the key is resolved per call, not per process. Over stdio it is the
@@ -237,7 +241,7 @@ def _real_failure(exc: OrcaLayerError) -> ToolError:
 
 # ── public tools ─────────────────────────────────────────────────────────────
 
-@mcp.tool(title="Smart-money leaderboard", annotations=_READ_ONLY)
+@mcp.tool(title="Smart-money leaderboard", annotations=_read_only("Smart-money leaderboard"))
 def leaderboard(
     sort: str = "pnl",
     category: str | None = None,
@@ -317,7 +321,7 @@ def leaderboard(
     }
 
 
-@mcp.tool(title="Wallet overview", annotations=_READ_ONLY)
+@mcp.tool(title="Wallet overview", annotations=_read_only("Wallet overview"))
 def wallet_overview(address: str | int) -> dict:
     """Summarize one wallet's trading profile and performance.
 
@@ -446,7 +450,7 @@ def wallet_overview(address: str | int) -> dict:
     }
 
 
-@mcp.tool(title="Wallet open positions", annotations=_READ_ONLY)
+@mcp.tool(title="Wallet open positions", annotations=_read_only("Wallet open positions"))
 def wallet_positions(address: str | int, limit: int = 15) -> dict:
     """List a wallet's largest open positions by current value.
 
@@ -499,7 +503,7 @@ def wallet_positions(address: str | int, limit: int = 15) -> dict:
     }
 
 
-@mcp.tool(title="Market search", annotations=_READ_ONLY)
+@mcp.tool(title="Market search", annotations=_read_only("Market search"))
 def markets(
     q: str | int = "",
     category: str | None = None,
@@ -570,7 +574,7 @@ def markets(
     }
 
 
-@mcp.tool(title="Smart-money consensus on a market", annotations=_READ_ONLY)
+@mcp.tool(title="Smart-money consensus on a market", annotations=_read_only("Smart-money consensus on a market"))
 def market_consensus(market: str | int) -> dict:
     """Smart-money consensus on one Polymarket market versus its current price.
 
@@ -670,7 +674,7 @@ def market_consensus(market: str | int) -> dict:
 
 # ── premium tool ─────────────────────────────────────────────────────────────
 
-@mcp.tool(title="Whale trade alerts (Premium)", annotations=_READ_ONLY)
+@mcp.tool(title="Whale trade alerts (Premium)", annotations=_read_only("Whale trade alerts (Premium)"))
 def whale_alerts(
     minutes: int = 60,
     min_usd: float = 1000,

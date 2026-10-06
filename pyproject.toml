@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "orcalayer-mcp"
-version = "0.5.3"
+version = "0.5.4"
 description = "MCP server for the OrcaLayer API — Polymarket whale and market analytics for Claude, Cursor and other MCP clients (stdio or Streamable HTTP)"
 readme = "README.md"
 license = { text = "MIT" }
