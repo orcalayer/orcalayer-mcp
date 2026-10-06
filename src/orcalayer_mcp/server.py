@@ -1,25 +1,38 @@
 """OrcaLayer MCP server.
 
-A thin Model Context Protocol (stdio) wrapper over the ``orcalayer`` Python
-SDK. It does not reimplement any API logic — every tool delegates to the SDK
-and shapes the result for an LLM agent.
+A thin Model Context Protocol wrapper over the ``orcalayer`` Python SDK. It
+does not reimplement any API logic — every tool delegates to the SDK and
+shapes the result for an LLM agent.
 
 Public tools (``leaderboard``, ``wallet_overview``, ``wallet_positions``,
 ``markets``, ``market_consensus``) work anonymously. ``whale_alerts`` is
-Premium and needs an API key supplied via the ``ORCALAYER_API_KEY``
-environment variable.
+Premium and needs an API key.
 
-Run it as ``orcalayer-mcp`` (console script) or ``python -m orcalayer_mcp``.
+Two transports (0.4.0):
+
+* stdio (default): ``orcalayer-mcp`` or ``python -m orcalayer_mcp``, for
+  Claude Desktop and other local clients. The Premium key comes from the
+  ``ORCALAYER_API_KEY`` environment variable.
+* Streamable HTTP: ``orcalayer-mcp --http [--host H] [--port P] [--path /mcp]``,
+  for the hosted server (https://orcalayer.com/mcp) and self-hosting behind a
+  reverse proxy. The Premium key is read per request from the
+  ``Authorization: Bearer <key>`` or ``X-API-Key`` header, so one process
+  serves many users and never holds a key of its own. Requests without a
+  header are anonymous (public tools only).
 """
 
 from __future__ import annotations
 
+import argparse
 import os
+import threading
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ToolAnnotations
 
 from orcalayer import (
     AuthenticationError,
@@ -41,10 +54,6 @@ mcp = FastMCP(
     ),
 )
 
-# A single shared client for the process. The SDK constructor is cheap — it
-# makes no network call and does not validate the key — so an anonymous start
-# and a bad-key start both come up cleanly; a wrong key only surfaces when a
-# Premium tool is actually called.
 try:
     _MCP_VERSION = _pkg_version("orcalayer-mcp")
 except PackageNotFoundError:  # running from a source checkout without install
@@ -56,23 +65,84 @@ except PackageNotFoundError:  # running from a source checkout without install
 # to package 0.3.1 (seen in Glama's instance logs, 21.08.2026). Report ours.
 mcp._mcp_server.version = _MCP_VERSION
 
-_API_KEY = os.environ.get("ORCALAYER_API_KEY") or None
-_client = OrcaLayer(
-    api_key=_API_KEY,
-    user_agent_suffix=f"orcalayer-mcp/{_MCP_VERSION}",
+# Every tool is a read-only lookup against the OrcaLayer API: nothing is
+# created, changed or deleted, calls are safe to repeat, and the data comes
+# from outside the client (openWorldHint). The directory review requires a
+# title and a readOnlyHint on each tool, and Claude uses readOnlyHint to run
+# the tool without a per-call confirmation.
+_READ_ONLY = ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True
 )
+
+# ── API clients ──────────────────────────────────────────────────────────────
+# 0.4.0: the key is resolved per call, not per process. Over stdio it is the
+# ORCALAYER_API_KEY environment variable, as before. Over HTTP it is the
+# calling request's Authorization / X-API-Key header, so one hosted process
+# serves many users with their own keys (or none). The SDK constructor is
+# cheap — no network call, no key validation — so clients are built lazily
+# and cached per key; a wrong key only surfaces when a Premium tool is called.
+_ENV_API_KEY = os.environ.get("ORCALAYER_API_KEY") or None
+_UA_SUFFIX = f"orcalayer-mcp/{_MCP_VERSION}"
+_clients: dict[str | None, OrcaLayer] = {}
+_clients_lock = threading.Lock()
+_CLIENT_CACHE_MAX = 256
+
+
+def _request_api_key() -> str | None:
+    """The Premium key for the current tool call, or None for anonymous.
+
+    HTTP transport: ``Authorization: Bearer <key>`` or ``X-API-Key: <key>`` on
+    the request that carried this call. Never read from the query string.
+    Otherwise (stdio, or an HTTP request without a header) the environment
+    variable, which the hosted server simply does not set.
+    """
+    request = None
+    try:
+        request = mcp.get_context().request_context.request
+    except (ValueError, LookupError, AttributeError):
+        request = None  # no active MCP request (stdio handshake, tests)
+    if request is not None:
+        headers = getattr(request, "headers", None) or {}
+        auth = (headers.get("authorization") or "").strip()
+        if auth[:7].lower() == "bearer ":
+            key = auth[7:].strip()
+            if key:
+                return key
+        key = (headers.get("x-api-key") or "").strip()
+        if key:
+            return key
+    return _ENV_API_KEY
+
+
+def _client_for(key: str | None) -> OrcaLayer:
+    with _clients_lock:
+        client = _clients.get(key)
+        if client is None:
+            if len(_clients) >= _CLIENT_CACHE_MAX:
+                # Keys in flight are few; a rare full reset beats an LRU here.
+                _clients.clear()
+            client = OrcaLayer(api_key=key, user_agent_suffix=_UA_SUFFIX)
+            _clients[key] = client
+        return client
+
+
+def _client() -> OrcaLayer:
+    """The SDK client for the current call (anonymous or keyed)."""
+    return _client_for(_request_api_key())
 
 
 # ── error handling ───────────────────────────────────────────────────────────
 
 def _scrub(message: str) -> str:
-    """Defensively strip the API key from any text before it leaves the server.
+    """Defensively strip the caller's API key from any text before it leaves
+    the server.
 
     The SDK's own exception messages never carry the key, but this guarantees
     it can never leak through an error string even if that changes upstream.
     """
-    if _API_KEY:
-        return message.replace(_API_KEY, "***")
+    key = _request_api_key()
+    if key:
+        return message.replace(key, "***")
     return message
 
 
@@ -89,7 +159,7 @@ def _real_failure(exc: OrcaLayerError) -> ToolError:
 
 # ── public tools ─────────────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(title="Smart-money leaderboard", annotations=_READ_ONLY)
 def leaderboard(
     sort: str = "pnl",
     category: str | None = None,
@@ -111,14 +181,14 @@ def leaderboard(
     """
     limit = max(1, min(limit, 100))
     try:
-        return _client.leaderboard(
+        return _client().leaderboard(
             sort=sort, category=category, filter=filter, limit=limit
         )
     except OrcaLayerError as exc:
         raise _real_failure(exc)
 
 
-@mcp.tool()
+@mcp.tool(title="Wallet overview", annotations=_READ_ONLY)
 def wallet_overview(address: str) -> dict:
     """Summarize one wallet's trading profile and performance.
 
@@ -139,7 +209,7 @@ def wallet_overview(address: str) -> dict:
         # poll=False keeps the call non-blocking: a cold heavy wallet raises
         # WalletComputingError at once (no ~60s SDK sleep) so we can surface a
         # "computing, retry later" notice instead of hitting the client timeout.
-        data = _client.wallet_overview(address, poll=False)
+        data = _client().wallet_overview(address, poll=False)
     except WalletComputingError as exc:
         # Cache miss on a heavy wallet: stats are not ready yet. Surface an
         # actionable "try again" notice — this is not a failure, so we return
@@ -201,7 +271,7 @@ def wallet_overview(address: str) -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(title="Wallet open positions", annotations=_READ_ONLY)
 def wallet_positions(address: str, limit: int = 15) -> dict:
     """List a wallet's largest open positions by current value.
 
@@ -218,7 +288,7 @@ def wallet_positions(address: str, limit: int = 15) -> dict:
     try:
         # The API ignores the page limit and returns the wallet's full set
         # unordered, so we fetch all of them and do the top-N selection here.
-        data = _client.wallet_positions(address, limit=500)
+        data = _client().wallet_positions(address, limit=500)
     except OrcaLayerError as exc:
         raise _real_failure(exc)
 
@@ -254,7 +324,7 @@ def wallet_positions(address: str, limit: int = 15) -> dict:
     }
 
 
-@mcp.tool()
+@mcp.tool(title="Market search", annotations=_READ_ONLY)
 def markets(
     q: str = "",
     category: str | None = None,
@@ -279,7 +349,7 @@ def markets(
     """
     limit = max(1, min(limit, 100))
     try:
-        return _client.markets(
+        return _client().markets(
             q,
             category=category,
             min_volume=min_volume,
@@ -290,7 +360,7 @@ def markets(
         raise _real_failure(exc)
 
 
-@mcp.tool()
+@mcp.tool(title="Smart-money consensus on a market", annotations=_READ_ONLY)
 def market_consensus(market: str) -> dict:
     """Smart-money consensus on one Polymarket market versus its current price.
 
@@ -317,7 +387,7 @@ def market_consensus(market: str) -> dict:
     if m.startswith("http"):
         m = m.rstrip("/").rsplit("/", 1)[-1]
     try:
-        data = _client.market(m)
+        data = _client().market(m)
     except OrcaLayerError as exc:
         raise _real_failure(exc)
 
@@ -388,7 +458,7 @@ def market_consensus(market: str) -> dict:
 
 # ── premium tool ─────────────────────────────────────────────────────────────
 
-@mcp.tool()
+@mcp.tool(title="Whale trade alerts (Premium)", annotations=_READ_ONLY)
 def whale_alerts(
     minutes: int = 60,
     min_usd: float = 1000,
@@ -402,9 +472,11 @@ def whale_alerts(
     who traded, buy/sell, side, amount, price and the market. Use it to get
     alerts when profitable Polymarket wallets open or close positions.
 
-    Requires a Premium API key set via the ORCALAYER_API_KEY environment
-    variable. Without a key this returns a short notice on how to get one (it
-    does not call the API and is not an error).
+    Requires an OrcaLayer Premium API key: on the hosted server it is the
+    ``Authorization: Bearer <key>`` request header, on the local stdio server
+    the ORCALAYER_API_KEY environment variable. Without a key this returns a
+    short notice on how to get one (it does not call the API and is not an
+    error).
 
     Args:
         minutes: Lookback window in minutes (max 1440 = 24h).
@@ -414,16 +486,19 @@ def whale_alerts(
     """
     # Pre-check the key so the "needs Premium" path is an actionable message,
     # never a failure and never an API round-trip.
-    if not _API_KEY:
+    key = _request_api_key()
+    if not key:
         return (
-            "whale_alerts is a Premium feature and needs an API key. "
-            "Get one at https://orcalayer.com/pricing and set it as the "
-            "ORCALAYER_API_KEY environment variable for this MCP server."
+            "whale_alerts is a Premium feature and needs an OrcaLayer API key. "
+            "Get one at https://orcalayer.com/pricing. On the hosted server "
+            "(https://orcalayer.com/mcp) send it as the request header "
+            "`Authorization: Bearer <key>`; for the local stdio server set the "
+            "ORCALAYER_API_KEY environment variable."
         )
 
     limit = max(1, min(limit, 100))
     try:
-        return _client.whale_alerts(
+        return _client_for(key).whale_alerts(
             minutes=minutes, min_usd=min_usd, category=category, limit=limit
         )
     except AuthenticationError as exc:
@@ -573,6 +648,9 @@ _API_REFERENCE = """# OrcaLayer public REST API
 Base: https://orcalayer.com
 - Public read endpoints: /api/v2/* (no key)
 - Premium endpoints: /api/public/v1/* (Bearer or x-api-key)
+- Hosted MCP server: https://orcalayer.com/mcp (Streamable HTTP; the same six
+  tools as this package; no authentication for the public tools, a Premium
+  key for whale_alerts as the `Authorization: Bearer <key>` request header)
 
 ## Auth
 Send a Premium key as `Authorization: Bearer <key>` or `x-api-key: <key>`. Public
@@ -646,9 +724,63 @@ def api_reference_resource() -> str:
 
 # ── entry point ──────────────────────────────────────────────────────────────
 
-def main() -> None:
-    """Console-script entry point: run the MCP server over stdio."""
-    mcp.run()
+def main(argv: list[str] | None = None) -> None:
+    """Console-script entry point.
+
+    No arguments: serve stdio (Claude Desktop and other local clients).
+    ``--http``: serve Streamable HTTP on ``--host``/``--port`` at ``--path``,
+    stateless with plain JSON responses, for hosting behind a reverse proxy
+    (the hosted server at https://orcalayer.com/mcp runs exactly this).
+    """
+    parser = argparse.ArgumentParser(
+        prog="orcalayer-mcp",
+        description="OrcaLayer MCP server: Polymarket smart-money analytics for MCP clients.",
+    )
+    parser.add_argument(
+        "--http",
+        action="store_true",
+        help="serve Streamable HTTP instead of stdio (env ORCALAYER_MCP_HTTP=1 does the same)",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("ORCALAYER_MCP_HOST", "127.0.0.1"),
+        help="bind address for --http (default 127.0.0.1: put a reverse proxy in front)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("ORCALAYER_MCP_PORT", "8020")),
+        help="port for --http (default 8020)",
+    )
+    parser.add_argument(
+        "--path",
+        default=os.environ.get("ORCALAYER_MCP_PATH", "/mcp"),
+        help="URL path of the MCP endpoint for --http (default /mcp)",
+    )
+    args = parser.parse_args(argv)
+
+    if not args.http and os.environ.get("ORCALAYER_MCP_HTTP", "") not in ("1", "true", "yes"):
+        mcp.run()
+        return
+
+    settings = mcp.settings
+    settings.host = args.host
+    settings.port = args.port
+    settings.streamable_http_path = args.path
+    # Stateless: every request is self-contained, so there are no sticky
+    # sessions to lose on a restart and any number of processes could share
+    # the load. JSON responses instead of SSE streams: nothing long-lived to
+    # hold open through Cloudflare and nginx; tools answer in well under a
+    # second anyway.
+    settings.stateless_http = True
+    settings.json_response = True
+    # The SDK's default for a 127.0.0.1 bind only accepts "Host: localhost",
+    # which would reject every request forwarded by the reverse proxy with the
+    # public host name. Host and Origin policy is the proxy's job here.
+    settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=False
+    )
+    mcp.run(transport="streamable-http")
 
 
 if __name__ == "__main__":

@@ -20,5 +20,8 @@ COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 RUN pip install .
 
-# stdio transport: the MCP client talks over stdin/stdout
+# stdio transport by default: the MCP client talks over stdin/stdout.
+# For a hosted HTTP server run the image with:
+#   docker run -p 8020:8020 <image> --http --host 0.0.0.0 --port 8020
+# and put a reverse proxy with TLS in front (the endpoint is /mcp).
 ENTRYPOINT ["orcalayer-mcp"]
