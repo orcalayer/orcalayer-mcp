@@ -125,6 +125,10 @@ The server is stateless and answers plain JSON, so any reverse proxy with TLS
 in front of it will do (forward `POST /mcp` to `127.0.0.1:8020/mcp`). The
 `ORCALAYER_MCP_HTTP=1`, `ORCALAYER_MCP_HOST`, `ORCALAYER_MCP_PORT` and
 `ORCALAYER_MCP_PATH` environment variables are equivalent to the flags.
+`ORCALAYER_MCP_ANON_BASE_URL` optionally routes anonymous calls to a different
+API host (the hosted server points it at its local backend); calls that carry
+a key always go to `https://orcalayer.com`. Put your own per-client rate limit
+in the proxy: the server itself does not limit callers.
 
 ## License
 

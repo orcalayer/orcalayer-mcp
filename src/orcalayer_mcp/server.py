@@ -87,6 +87,17 @@ _clients: dict[str | None, OrcaLayer] = {}
 _clients_lock = threading.Lock()
 _CLIENT_CACHE_MAX = 256
 
+# 0.4.1: where ANONYMOUS calls go. Unset (every local install): the SDK's
+# default, https://orcalayer.com. On the hosted server it is the backend on
+# the same machine (http://127.0.0.1:8000), so the anonymous traffic of every
+# connector user does not share one public-IP rate-limit bucket at the API;
+# the per-client limits live in the reverse proxy in front of /mcp instead.
+# Calls that carry a key are unaffected and keep going through the public
+# host, where the key's own limit and usage journal apply. The backend treats
+# localhost as a trusted caller, so the public tools must keep calling public
+# endpoints only, never Premium ones; whale_alerts goes out with its key.
+_ANON_BASE_URL = os.environ.get("ORCALAYER_MCP_ANON_BASE_URL") or None
+
 
 def _request_api_key() -> str | None:
     """The Premium key for the current tool call, or None for anonymous.
@@ -121,7 +132,10 @@ def _client_for(key: str | None) -> OrcaLayer:
             if len(_clients) >= _CLIENT_CACHE_MAX:
                 # Keys in flight are few; a rare full reset beats an LRU here.
                 _clients.clear()
-            client = OrcaLayer(api_key=key, user_agent_suffix=_UA_SUFFIX)
+            kwargs: dict[str, Any] = {"api_key": key, "user_agent_suffix": _UA_SUFFIX}
+            if key is None and _ANON_BASE_URL:
+                kwargs["base_url"] = _ANON_BASE_URL
+            client = OrcaLayer(**kwargs)
             _clients[key] = client
         return client
 
