@@ -22,10 +22,10 @@ Python SDK and exposes six read-only tools:
 
 | Tool | What it does | Key |
 |---|---|---|
-| `leaderboard` | Rank smart-money whales by P&L, win rate or volume | No |
-| `wallet_overview` | Wallet profit tracking: profile, P&L and win-rate summary | No |
+| `leaderboard` | Rank wallets from the Smart Money set by P&L, win rate, volume or trade count | No |
+| `wallet_overview` | Wallet profit tracking: profile, P&L, market win rate, profit factor, rankings | No |
 | `wallet_positions` | A wallet's largest open positions | No |
-| `markets` | Track smart money flows: search markets where smart whales are accumulating | No |
+| `markets` | Track smart money flows: search markets and see how many Smart Money wallets hold each side | No |
 | `market_consensus` | Smart-money consensus on one market vs its price (head-count + capital-weighted) | No |
 | `whale_alerts` | Real-time alerts on profitable wallets: live feed of smart-whale trades | Premium |
 
@@ -38,6 +38,14 @@ an error.
 
 Every tool carries `readOnlyHint: true`: nothing is created, changed or
 deleted on your behalf. Data is read from the OrcaLayer API only.
+
+Each result carries a short `notes` block that defines its fields, so a model
+comparing two tools never meets two different numbers under one name:
+`market_win_rate` (share of resolved markets won) has the same basis in
+`leaderboard` and `wallet_overview`; `profit_factor` is capped at 99.99 on the
+leaderboard (`profit_factor_capped`) and uncapped net in the overview;
+`indexed_volume_usd` is the volume of fills in OrcaLayer's index, not
+Polymarket's figure; Smart Money counts are wallets, whatever their size.
 
 > **New (2026-07-22):** the Premium SSE stream (`/api/public/v1/live/trades`)
 > now carries `settlement_type` (`MINT` / `MERGE` / `COMPLEMENTARY` / `null`)

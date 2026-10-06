@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.orcalayer/orcalayer-mcp",
   "description": "Polymarket smart-money analytics: whale leaderboard, wallet P&L, market consensus, live alerts",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "websiteUrl": "https://orcalayer.com",
   "repository": {
     "url": "https://github.com/orcalayer/orcalayer-mcp",
@@ -18,7 +18,7 @@
     {
       "registryType": "pypi",
       "identifier": "orcalayer-mcp",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "transport": {
         "type": "stdio"
       },

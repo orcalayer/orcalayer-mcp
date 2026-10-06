@@ -26,6 +26,8 @@ from __future__ import annotations
 import argparse
 import os
 import threading
+import urllib.parse
+from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from typing import Any
 
@@ -145,6 +147,67 @@ def _client() -> OrcaLayer:
     return _client_for(_request_api_key())
 
 
+# ── field shaping (0.5.0) ────────────────────────────────────────────────────
+# The REST API serves several bases under one name: the leaderboard's
+# `win_rate` / `profit_factor` and the wallet overview's are computed
+# differently (checked on 18 wallets 06.10.2026: they never matched), while
+# `market_win_rate` agrees between the two everywhere. A model comparing two
+# tools must not meet two different numbers under the same label, so the tools
+# expose one explicitly named field per concept and a short `notes` block.
+
+# Fills before this date sit in OrcaLayer's history table, where part of the
+# 2024 rows carry a wrong time (~11 months early; block numbers are right,
+# found 06.10.2026, correction pending). Until it is corrected, first/last
+# trade dates before the cutoff are not shown as exact dates.
+_TRUSTED_TRADE_TIME_FROM = int(datetime(2025, 10, 1, tzinfo=timezone.utc).timestamp())
+
+_SMART_SET = (
+    "OrcaLayer's Smart Money set: wallets that pass the quality test in the orcalayer://methodology "
+    "resource (about 208K of ~1.4M tracked wallets). It is a quality filter, not a size filter"
+)
+
+
+def _num(value: Any) -> Any:
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _trade_date(ts: Any) -> str | None:
+    """ISO date of a trade timestamp, or a plain statement when it cannot be trusted."""
+    try:
+        t = int(ts)
+    except (TypeError, ValueError):
+        return None
+    if t <= 0:
+        return None
+    if t < _TRUSTED_TRADE_TIME_FROM:
+        return "before 2025-10 (exact date not available)"
+    return datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+def _resolved(wins: Any, losses: Any) -> int | None:
+    w, lo = _num(wins), _num(losses)
+    return int(w) + int(lo) if w is not None and lo is not None else None
+
+
+_NOTE_MARKET_WIN_RATE = (
+    "market_win_rate: share of resolved markets the wallet won, one market = one result "
+    "(market_wins / market_losses over resolved_markets). Same basis and value in leaderboard and wallet_overview."
+)
+_NOTE_PNL = (
+    "total_pnl: the wallet's lifetime profit and loss in USD as Polymarket reports it "
+    "(OrcaLayer's own reconstruction when Polymarket's figure is not synced)."
+)
+_NOTE_VOLUME = (
+    "indexed_volume_usd / indexed_trades: the wallet's fills in OrcaLayer's on-chain index. Not Polymarket's volume "
+    "figure: winning shares redeem at $1 without a trade, so P&L can exceed this volume, and fills before "
+    "October 2025 are only partly indexed, so for older wallets it can be well below Polymarket's number."
+)
+_NOTE_TRADE_DATES = (
+    "last_trade / first_trade: dates of fills in OrcaLayer's index. Dates before October 2025 are shown only as "
+    "'before 2025-10' while a timestamp correction of the older history is pending."
+)
+
+
 # ── error handling ───────────────────────────────────────────────────────────
 
 def _scrub(message: str) -> str:
@@ -180,37 +243,90 @@ def leaderboard(
     filter: str = "smart",
     limit: int = 20,
 ) -> dict:
-    """Rank the most successful Polymarket whales (smart-money traders).
+    """Rank Polymarket traders from OrcaLayer's Smart Money set (or all wallets).
 
-    Use this to find top traders by realized profit, win rate, or volume —
-    optionally narrowed to one market category. Returns each whale's wallet,
-    name, total P&L, win rate, profit factor and resolved-market count.
+    Use this to find top traders by lifetime profit, win rate, volume or trade
+    count, optionally narrowed to one market category. Returns per wallet:
+    name, total_pnl (Polymarket's lifetime P&L), market_win_rate with
+    market_wins / market_losses / resolved_markets, profit_factor (capped at
+    99.99, with profit_factor_capped), indexed_volume_usd, indexed_trades,
+    main category, average entry price, open positions and the last trade date.
+    `total` is how many wallets match the filter. A `notes` block defines each
+    field.
 
     Args:
-        sort: Ranking key — "pnl" (default), "win_rate", "volume" or "trades".
+        sort: Ranking key: "pnl" (default), "win_rate", "volume" or "trades".
+            "win_rate" orders by the leaderboard's stored win rate, which is
+            computed differently from the market_win_rate shown, so rows can
+            look out of order by that column.
         category: Restrict to one category, e.g. "Crypto", "Sports",
             "Politics", "Geopolitics", "Economics", "Tech/AI". None = all.
-        filter: "smart" (curated profitable whales, default) or "all".
-        limit: How many whales to return (1–100).
+        filter: "smart" (OrcaLayer's Smart Money set, default) or "all".
+        limit: How many wallets to return (1–100).
     """
     limit = max(1, min(limit, 100))
     try:
-        return _client().leaderboard(
+        data = _client().leaderboard(
             sort=sort, category=category, filter=filter, limit=limit
         )
     except OrcaLayerError as exc:
         raise _real_failure(exc)
+
+    rows = []
+    for w in data.get("whales", []) or []:
+        pf = _num(w.get("profit_factor"))
+        rows.append({
+            "wallet": w.get("wallet"),
+            "name": w.get("name"),
+            "total_pnl": w.get("total_pnl"),
+            "market_win_rate": w.get("market_win_rate"),
+            "market_wins": w.get("market_wins"),
+            "market_losses": w.get("market_losses"),
+            "resolved_markets": _resolved(w.get("market_wins"), w.get("market_losses")),
+            "profit_factor": pf,
+            "profit_factor_capped": bool(pf is not None and pf >= 99.99),
+            "indexed_volume_usd": w.get("total_volume"),
+            "indexed_trades": w.get("total_trades"),
+            "main_category": w.get("main_category"),
+            "avg_entry_price": w.get("avg_entry_price"),
+            "open_positions": w.get("active_count"),
+            "last_trade": _trade_date(w.get("last_trade_ts")),
+            "skill_badge": w.get("skill_badge"),
+        })
+    return {
+        "wallets": rows,
+        "total": data.get("total"),
+        "sort": data.get("sort", sort),
+        "filter": filter,
+        "notes": {
+            "total": (
+                "How many wallets match the filter. filter='smart' means " + _SMART_SET + "."
+            ),
+            "market_win_rate": _NOTE_MARKET_WIN_RATE,
+            "profit_factor": (
+                "profit_factor: the leaderboard's gross profit / gross loss over closed positions, capped at 99.99; "
+                "profit_factor_capped = true means almost no recorded losses. wallet_overview reports a different, "
+                "uncapped net profit factor from OrcaLayer's own P&L reconstruction."
+            ),
+            "total_pnl": _NOTE_PNL,
+            "indexed_volume_usd": _NOTE_VOLUME,
+            "last_trade": _NOTE_TRADE_DATES,
+            "skill_badge": "skill_badge: stricter weekly mark inside Smart Money (orcalayer.com/methodology#skill-badge).",
+        },
+    }
 
 
 @mcp.tool(title="Wallet overview", annotations=_READ_ONLY)
 def wallet_overview(address: str) -> dict:
     """Summarize one wallet's trading profile and performance.
 
-    Wallet profit tracking for any Polymarket address: lifetime P&L, win
-    rate, ROI-style stats (profit factor), volume and activity. Accepts a 0x
-    wallet address or an OrcaLayer nickname. Returns a compact summary —
-    identity, lifetime activity, and P&L stats — rather than the full raw
-    record, so it stays readable for heavy wallets.
+    Wallet profit tracking for any Polymarket address: lifetime P&L
+    (Polymarket's figure), market_win_rate over resolved markets, a net
+    profit factor, indexed volume and activity, category mix and leaderboard
+    rankings. Accepts a 0x wallet address or an OrcaLayer nickname. Returns a
+    compact summary rather than the full raw record, so it stays readable for
+    heavy wallets. A `notes` block defines each field; market_win_rate has
+    the same basis and value as in the leaderboard tool.
 
     If the wallet's stats are still being computed server-side, this returns
     a ``{"status": "computing", "retry_after_seconds": N}`` notice instead of
@@ -243,6 +359,29 @@ def wallet_overview(address: str) -> dict:
     overview = data.get("overview", {}) or {}
     stats = data.get("stats", {}) or {}
 
+    # Rankings left the overview payload in a backend performance split
+    # (12.05.2026: the overview always carries rankings = null). They live on
+    # /wallet/{address}/rankings now, so fetch them here; a failure there must
+    # not cost the caller the overview.
+    rankings = None
+    wallet_ref = profile.get("proxy_wallet") or profile.get("address") or address
+    try:
+        raw = _client()._get(f"wallet/{urllib.parse.quote(str(wallet_ref))}/rankings", poll=False)
+        r = (raw or {}).get("rankings") or None
+        if r:
+            rankings = {
+                "rank_pnl": r.get("rank_pnl"),
+                "rank_win_rate": r.get("rank_winrate"),
+                "rank_volume": r.get("rank_volume"),
+                "rank_trades": r.get("rank_trades"),
+                "rank_profit_factor": r.get("rank_profit_factor"),
+                "out_of": r.get("total_traders"),
+            }
+    except Exception:  # noqa: BLE001 — rankings are optional context
+        rankings = None
+
+    first_ts = overview.get("first_trade")
+    last_ts = overview.get("last_trade")
     return {
         "profile": {
             "name": profile.get("name"),
@@ -250,38 +389,59 @@ def wallet_overview(address: str) -> dict:
             "address": profile.get("address"),
             "proxy_wallet": profile.get("proxy_wallet"),
         },
-        "overview": {
-            "total_trades": overview.get("total_trades"),
-            "total_markets": overview.get("total_markets"),
-            "total_volume": overview.get("total_volume"),
-            "profit_factor": overview.get("profit_factor"),
-            "active_positions": overview.get("active_count"),
-            "closed_positions": overview.get("closed_count"),
-            "median_hold_days": overview.get("median_hold_days"),
-            "first_trade": overview.get("first_trade"),
-            "last_trade": overview.get("last_trade"),
-        },
-        "stats": {
-            "resolved_markets": stats.get("resolved"),
-            "wins": stats.get("wins"),
-            "losses": stats.get("losses"),
-            "win_rate": stats.get("win_rate"),
+        "performance": {
             "total_pnl": stats.get("total_pnl"),
-            "profit_factor": stats.get("profit_factor"),
-            "is_smart": stats.get("is_smart"),
             "unrealized_pnl": stats.get("unrealized_pnl"),
             "pnl_24h": stats.get("pnl_24h"),
             "pnl_7d": stats.get("pnl_7d"),
+            "market_win_rate": stats.get("market_win_rate"),
+            "market_wins": stats.get("market_wins"),
+            "market_losses": stats.get("market_losses"),
+            "resolved_markets": _resolved(stats.get("market_wins"), stats.get("market_losses")),
+            "profit_factor": stats.get("profit_factor"),
+            "is_smart": stats.get("is_smart"),
         },
-        # Volume share per market category (e.g. {"CRYPTO": 86.1, ...}) and
-        # leaderboard rankings — cheap, high-signal context for an agent.
-        # Passed through as-is; rankings may be null for wallets off the board.
+        "activity": {
+            "markets_traded": overview.get("total_markets"),
+            "indexed_trades": overview.get("total_trades"),
+            "indexed_volume_usd": overview.get("total_volume"),
+            "open_positions": overview.get("active_count"),
+            "closed_positions": overview.get("closed_count"),
+            "median_hold_days": overview.get("median_hold_days"),
+            "first_trade": _trade_date(first_ts),
+            "last_trade": _trade_date(last_ts),
+        },
+        # Volume share per market category (e.g. {"CRYPTO": 86.1, ...}).
         "categories": data.get("categories"),
-        "rankings": data.get("rankings"),
+        "rankings": rankings,
         # True when heavy side-stats timed out: core stats above are still
         # valid, some derived fields may be missing.
         "degraded": data.get("degraded", False),
         "as_of": data.get("as_of"),
+        "notes": {
+            "total_pnl": _NOTE_PNL,
+            "market_win_rate": _NOTE_MARKET_WIN_RATE,
+            "profit_factor": (
+                "profit_factor: net profit factor from OrcaLayer's FIFO P&L reconstruction, not capped. The leaderboard "
+                "tool shows a different figure (gross over closed positions, capped at 99.99)."
+            ),
+            "is_smart": (
+                "is_smart: the wallet is in " + _SMART_SET + ". The test uses OrcaLayer's stored win rate, which "
+                "is computed differently from market_win_rate, so a Smart Money wallet can show a market_win_rate "
+                "below 55%."
+            ),
+            "indexed_volume_usd": _NOTE_VOLUME,
+            "closed_positions": (
+                "closed_positions counts positions, open_positions currently held ones; one market can hold "
+                "several positions, so closed_positions can exceed resolved_markets."
+            ),
+            "median_hold_days": (
+                "median_hold_days: median days a position was held, over positions closed in the last 90 days; "
+                "null when the wallet closed none in that window."
+            ),
+            "trade_dates": _NOTE_TRADE_DATES,
+            "rankings": "rankings: position among `out_of` tracked wallets, 1 = best; null when the wallet is not ranked.",
+        },
     }
 
 
@@ -346,24 +506,27 @@ def markets(
     min_whales: int | None = None,
     limit: int = 20,
 ) -> dict:
-    """Search Polymarket markets, optionally where smart whales are clustering.
+    """Search Polymarket markets, optionally where Smart Money wallets cluster.
 
-    Use this to track smart money flows: find markets by topic and surface
-    where smart money is accumulating right now. Returns each market's
-    question, YES price, smart-whale counts on each side, volume and days
-    left.
+    Use this to track smart money flows: find markets by topic and see how
+    many wallets from OrcaLayer's Smart Money set hold each side right now.
+    Returns each market's id, question, YES price, smart_wallets_yes /
+    smart_wallets_no, volume, end date and days left. The counts are wallets,
+    whatever their position size; popular markets have thousands. For the
+    dollar split on one market use market_consensus.
 
     Args:
         q: Free-text query; also accepts a Polymarket URL or slug. "" browses.
         category: One of "Crypto", "Geopolitics", "Sports", "Politics",
             "Economics", "Tech/AI". None = all.
         min_volume: Minimum market volume in USD.
-        min_whales: Minimum number of smart whales active in the market.
+        min_whales: Minimum number of Smart Money wallets holding a position
+            in the market (either side).
         limit: How many markets to return (1–100).
     """
     limit = max(1, min(limit, 100))
     try:
-        return _client().markets(
+        data = _client().markets(
             q,
             category=category,
             min_volume=min_volume,
@@ -372,6 +535,35 @@ def markets(
         )
     except OrcaLayerError as exc:
         raise _real_failure(exc)
+
+    shown = [
+        {
+            "id": m.get("id"),
+            "question": m.get("question"),
+            "slug": m.get("slug"),
+            "event_slug": m.get("event_slug"),
+            "category": m.get("category"),
+            "price_yes": m.get("price_yes"),
+            "smart_wallets_yes": m.get("whales_yes"),
+            "smart_wallets_no": m.get("whales_no"),
+            "volume_usd": m.get("volume"),
+            "end_date": m.get("end_date"),
+            "days_left": m.get("days_left"),
+        }
+        for m in (data.get("markets", []) or [])
+    ]
+    return {
+        "markets": shown,
+        "total": data.get("total"),
+        "notes": {
+            "smart_wallets_yes": (
+                "smart_wallets_yes / smart_wallets_no: how many wallets from " + _SMART_SET
+                + " hold YES / NO in this market, counted regardless of position size (a $5 holder counts like a "
+                "$500K one). market_consensus gives the capital-weighted split."
+            ),
+            "volume_usd": "volume_usd: the market's total traded volume in USD as Polymarket reports it.",
+        },
+    }
 
 
 @mcp.tool(title="Smart-money consensus on a market", annotations=_READ_ONLY)
@@ -386,10 +578,11 @@ def market_consensus(market: str) -> dict:
     money disagrees with the crowd.
 
     Two consensus reads are returned side by side and can disagree:
-    ``head_count`` (one whale = one vote) and ``capital_weighted`` (dollars
-    invested per side). Head-count is the weaker signal — a $5 wallet counts
-    the same as a $500K one — so when the two disagree, trust the capital
-    split more. On cheap longshots (YES under ~15 cents) head-count skews
+    ``head_count`` (one Smart Money wallet = one vote; wallets from
+    OrcaLayer's Smart Money set, so popular markets count thousands) and
+    ``capital_weighted`` (dollars invested per side). Head-count is the
+    weaker signal — a $5 wallet counts the same as a $500K one — so when the
+    two disagree, trust the capital split more. On cheap longshots (YES under ~15 cents) head-count skews
     YES structurally. Divergence from price is positioning information, not
     proof the market is mispriced; never present it as "the market is wrong".
 
@@ -461,10 +654,11 @@ def market_consensus(market: str) -> dict:
         },
         "last_24h": data.get("smart_money_24h"),
         "caveats": (
-            "Head-count consensus is a weak signal: a $5 wallet counts the "
-            "same as a $500K one. Prefer the capital-weighted split when the "
-            "two disagree. On cheap longshots (YES < ~15c) head-count skews "
-            "YES structurally. Divergence from price is positioning "
+            "head_count counts wallets from " + _SMART_SET + ", whatever their "
+            "position size, so popular markets count thousands and a $5 wallet "
+            "counts the same as a $500K one. Prefer the capital-weighted split "
+            "when the two disagree. On cheap longshots (YES < ~15c) head-count "
+            "skews YES structurally. Divergence from price is positioning "
             "information, not proof the market is mispriced."
         ),
     }
