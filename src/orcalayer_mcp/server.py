@@ -24,6 +24,7 @@ Two transports (0.4.0):
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import threading
 import urllib.parse
@@ -988,6 +989,12 @@ def main(argv: list[str] | None = None) -> None:
     settings.transport_security = TransportSecuritySettings(
         enable_dns_rebinding_protection=False
     )
+    # Data minimisation: httpx logs every outgoing API URL at INFO, i.e. each
+    # tool call's parameters (wallet addresses, search terms) would land in the
+    # host's system journal on every request. The API keeps its own request log
+    # with a fixed retention; the MCP process does not need a second copy.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     mcp.run(transport="streamable-http")
 
 
