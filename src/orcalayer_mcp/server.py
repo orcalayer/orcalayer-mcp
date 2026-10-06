@@ -318,7 +318,7 @@ def leaderboard(
 
 
 @mcp.tool(title="Wallet overview", annotations=_READ_ONLY)
-def wallet_overview(address: str) -> dict:
+def wallet_overview(address: str | int) -> dict:
     """Summarize one wallet's trading profile and performance.
 
     Wallet profit tracking for any Polymarket address: lifetime P&L
@@ -340,7 +340,7 @@ def wallet_overview(address: str) -> dict:
         # poll=False keeps the call non-blocking: a cold heavy wallet raises
         # WalletComputingError at once (no ~60s SDK sleep) so we can surface a
         # "computing, retry later" notice instead of hitting the client timeout.
-        data = _client().wallet_overview(address, poll=False)
+        data = _client().wallet_overview(str(address).strip(), poll=False)
     except WalletComputingError as exc:
         # Cache miss on a heavy wallet: stats are not ready yet. Surface an
         # actionable "try again" notice — this is not a failure, so we return
@@ -365,7 +365,7 @@ def wallet_overview(address: str) -> dict:
     # /wallet/{address}/rankings now, so fetch them here; a failure there must
     # not cost the caller the overview.
     rankings = None
-    wallet_ref = profile.get("proxy_wallet") or profile.get("address") or address
+    wallet_ref = profile.get("proxy_wallet") or profile.get("address") or str(address).strip()
     try:
         raw = _client()._get(f"wallet/{urllib.parse.quote(str(wallet_ref))}/rankings", poll=False)
         r = (raw or {}).get("rankings") or None
@@ -447,7 +447,7 @@ def wallet_overview(address: str) -> dict:
 
 
 @mcp.tool(title="Wallet open positions", annotations=_READ_ONLY)
-def wallet_positions(address: str, limit: int = 15) -> dict:
+def wallet_positions(address: str | int, limit: int = 15) -> dict:
     """List a wallet's largest open positions by current value.
 
     Accepts a 0x wallet address or an OrcaLayer nickname. Returns the
@@ -463,7 +463,7 @@ def wallet_positions(address: str, limit: int = 15) -> dict:
     try:
         # The API ignores the page limit and returns the wallet's full set
         # unordered, so we fetch all of them and do the top-N selection here.
-        data = _client().wallet_positions(address, limit=500)
+        data = _client().wallet_positions(str(address).strip(), limit=500)
     except OrcaLayerError as exc:
         raise _real_failure(exc)
 
@@ -501,7 +501,7 @@ def wallet_positions(address: str, limit: int = 15) -> dict:
 
 @mcp.tool(title="Market search", annotations=_READ_ONLY)
 def markets(
-    q: str = "",
+    q: str | int = "",
     category: str | None = None,
     min_volume: float | None = None,
     min_whales: int | None = None,
@@ -527,8 +527,11 @@ def markets(
     """
     limit = max(1, min(limit, 100))
     try:
+        # 0.5.2: q, address and market accept numbers too (a numeric market id,
+        # a nickname or search term made of digits): MCP Inspector and some
+        # models send them as JSON numbers, which a str-only parameter rejected.
         data = _client().markets(
-            q,
+            str(q),
             category=category,
             min_volume=min_volume,
             min_whales=min_whales,
@@ -568,7 +571,7 @@ def markets(
 
 
 @mcp.tool(title="Smart-money consensus on a market", annotations=_READ_ONLY)
-def market_consensus(market: str) -> dict:
+def market_consensus(market: str | int) -> dict:
     """Smart-money consensus on one Polymarket market versus its current price.
 
     Shows where smart money stands on a market: how many profitable
@@ -591,7 +594,7 @@ def market_consensus(market: str) -> dict:
         market: Market id, Polymarket slug or URL, or 0x condition id.
     """
     # Accept a full Polymarket URL by reducing it to its slug.
-    m = market.strip()
+    m = str(market).strip()
     if m.startswith("http"):
         m = m.rstrip("/").rsplit("/", 1)[-1]
     try:
