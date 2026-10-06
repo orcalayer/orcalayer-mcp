@@ -47,13 +47,14 @@ from orcalayer import (
 mcp = FastMCP(
     "orcalayer",
     instructions=(
-        "OrcaLayer exposes Polymarket smart-money analytics. Tools: rank profitable "
-        "whales (leaderboard), inspect a wallet's profile and positions "
-        "(wallet_overview, wallet_positions), search markets where smart money is "
-        "clustering (markets), read the smart-money consensus on one market versus "
-        "its price (market_consensus), and stream recent whale trades "
-        "(whale_alerts, Premium). Prompts give ready-made analyses; resources hold "
-        "the classification methodology, a glossary and the REST API reference."
+        "OrcaLayer provides read-only Polymarket smart-money analytics. Tools: a "
+        "ranking of profitable traders (leaderboard), a wallet's profile and open "
+        "positions (wallet_overview, wallet_positions), market search with Smart "
+        "Money wallet counts (markets), the Smart Money consensus on one market "
+        "versus its price (market_consensus), and recent trades by Smart Money "
+        "wallets (whale_alerts, Premium). Prompts hold ready-made analyses; "
+        "resources hold the classification methodology, a glossary and the REST "
+        "API reference."
     ),
 )
 
@@ -250,8 +251,8 @@ def leaderboard(
 ) -> dict:
     """Rank Polymarket traders from OrcaLayer's Smart Money set (or all wallets).
 
-    Use this to find top traders by lifetime profit, win rate, volume or trade
-    count, optionally narrowed to one market category. Returns per wallet:
+    Returns the top traders by lifetime profit, win rate, volume or trade
+    count, optionally within one market category. Per wallet:
     name, total_pnl (Polymarket's lifetime P&L), market_win_rate with
     market_wins / market_losses / resolved_markets, profit_factor (capped at
     99.99, with profit_factor_capped), indexed_volume_usd, indexed_trades,
@@ -333,9 +334,10 @@ def wallet_overview(address: str | int) -> dict:
     heavy wallets. A `notes` block defines each field; market_win_rate has
     the same basis and value as in the leaderboard tool.
 
-    If the wallet's stats are still being computed server-side, this returns
-    a ``{"status": "computing", "retry_after_seconds": N}`` notice instead of
-    data — call the tool again after that delay.
+    While the wallet's stats are still being computed server-side, the result
+    is a ``{"status": "computing", "retry_after_seconds": N}`` notice instead of
+    data; N is the number of seconds after which the stats are expected to be
+    ready.
 
     Args:
         address: 0x wallet address or OrcaLayer nickname.
@@ -513,12 +515,12 @@ def markets(
 ) -> dict:
     """Search Polymarket markets, optionally where Smart Money wallets cluster.
 
-    Use this to track smart money flows: find markets by topic and see how
-    many wallets from OrcaLayer's Smart Money set hold each side right now.
-    Returns each market's id, question, YES price, smart_wallets_yes /
-    smart_wallets_no, volume, end date and days left. The counts are wallets,
-    whatever their position size; popular markets have thousands. For the
-    dollar split on one market use market_consensus.
+    Finds markets by topic, slug or URL and shows how many wallets from
+    OrcaLayer's Smart Money set hold each side right now. Returns each
+    market's id, question, YES price, smart_wallets_yes / smart_wallets_no,
+    volume, end date and days left. The counts are wallets, whatever their
+    position size; popular markets have thousands. The dollar split on one
+    market is in the market_consensus tool.
 
     Args:
         q: Free-text query; also accepts a Polymarket URL or slug. "" browses.
@@ -578,21 +580,19 @@ def markets(
 def market_consensus(market: str | int) -> dict:
     """Smart-money consensus on one Polymarket market versus its current price.
 
-    Shows where smart money stands on a market: how many profitable
-    smart-money whales hold YES vs NO, how much capital each side has
-    invested, the current market price, and the divergence between
-    smart-money positioning and that price. Use it to answer "what does
-    smart money think about this market?" and to spot markets where smart
-    money disagrees with the crowd.
+    Returns how Smart Money wallets are positioned on one market: how many
+    hold YES and NO, how much capital each side has invested, the current
+    market price, and the gap between that positioning and the price.
 
     Two consensus reads are returned side by side and can disagree:
     ``head_count`` (one Smart Money wallet = one vote; wallets from
     OrcaLayer's Smart Money set, so popular markets count thousands) and
-    ``capital_weighted`` (dollars invested per side). Head-count is the
-    weaker signal — a $5 wallet counts the same as a $500K one — so when the
-    two disagree, trust the capital split more. On cheap longshots (YES under ~15 cents) head-count skews
-    YES structurally. Divergence from price is positioning information, not
-    proof the market is mispriced; never present it as "the market is wrong".
+    ``capital_weighted`` (dollars invested per side). In head_count a $5
+    wallet weighs the same as a $500K one, so it is the weaker of the two
+    reads; the capital split reflects the money at stake. On cheap longshots
+    (YES under ~15 cents) head_count leans YES structurally. The divergence
+    fields measure positioning against the price; they are not evidence that
+    the price is wrong.
 
     Args:
         market: Market id, Polymarket slug or URL, or 0x condition id.
@@ -664,10 +664,11 @@ def market_consensus(market: str | int) -> dict:
         "caveats": (
             "head_count counts wallets from " + _SMART_SET + ", whatever their "
             "position size, so popular markets count thousands and a $5 wallet "
-            "counts the same as a $500K one. Prefer the capital-weighted split "
-            "when the two disagree. On cheap longshots (YES < ~15c) head-count "
-            "skews YES structurally. Divergence from price is positioning "
-            "information, not proof the market is mispriced."
+            "counts the same as a $500K one; the capital-weighted split reflects "
+            "the money at stake and carries more information when the two "
+            "disagree. On cheap longshots (YES < ~15c) head-count leans YES "
+            "structurally. Divergence from price is positioning information, "
+            "not evidence that the market is mispriced."
         ),
     }
 
@@ -681,17 +682,18 @@ def whale_alerts(
     category: str | None = None,
     limit: int = 25,
 ) -> Any:
-    """Recent trades by smart-money whales — real-time alerts on profitable
+    """Recent trades by Smart Money wallets: real-time alerts on profitable
     wallets (Premium).
 
-    Returns whale trades in the last ``minutes`` over ``min_usd`` in size:
-    who traded, buy/sell, side, amount, price and the market. Use it to get
-    alerts when profitable Polymarket wallets open or close positions.
+    Returns trades by Smart Money wallets in the last ``minutes`` over
+    ``min_usd`` in size: who traded, buy or sell, side, amount, price, the
+    wallet's position after the trade, and the market. Covers profitable
+    Polymarket wallets opening, adding to or closing positions.
 
-    Requires an OrcaLayer Premium API key: on the hosted server it is the
+    Needs an OrcaLayer Premium API key: on the hosted server it is the
     ``Authorization: Bearer <key>`` request header, on the local stdio server
-    the ORCALAYER_API_KEY environment variable. Without a key this returns a
-    short notice on how to get one (it does not call the API and is not an
+    the ORCALAYER_API_KEY environment variable. Without a key the result is a
+    short notice on how to get one (no API call is made and it is not an
     error).
 
     Args:
@@ -885,7 +887,7 @@ _GLOSSARY = """# Prediction-markets glossary (OrcaLayer)
 - **Market maker (MM)** — provides liquidity on both sides; P&L is spread capture,
   not a directional call.
 - **NegRisk** — Polymarket's linked multi-outcome markets; resolved P&L is halved
-  and split/merge flows attributed, to avoid double-counting.
+  and split/merge flows attributed, so nothing is counted twice.
 - **FIFO P&L** — first-in, first-out realized profit, per wallet per market.
 - **Profit factor** — gross wins divided by gross losses.
 - **Alignment / consensus** — how strongly smart money agrees on one side of a
@@ -924,16 +926,15 @@ Since 2026-07-22 every event also carries `settlement_type`
 ("MINT" | "MERGE" | "COMPLEMENTARY" | null) — the settlement mechanics of the
 CLOB match, derived live by transaction-grouping ~60-120s before the trade
 appears on-chain (shadow-verified: 100.000% accurate on MINT/MERGE, coverage
-91.8%). Read it as mechanics, NOT trader intent: MINT means the order matched
-an opposite-side buyer (no seller was in the book), not that the wallet
-deliberately split collateral; ~80% of all fills settle as MINT. The label is
-tx-level (all fills of one match share it); COMPLEMENTARY means the tx
-contains a complementary component; null is an honest refusal (lone fill at
-the buffer edge or a complex batch) — never read null as "not a mint".
-A second stream, /api/public/v1/live/trades-indexed (Premium), delivers
+91.8%). The label describes settlement mechanics, not trader intent: MINT
+means the order matched an opposite-side buyer (no seller was in the book),
+not that the wallet deliberately split collateral; ~80% of all fills settle as
+MINT. The label is tx-level (all fills of one match share it); COMPLEMENTARY
+means the tx contains a complementary component; null is an honest refusal
+(lone fill at the buffer edge or a complex batch) and does not mean "not a
+mint". A second stream, /api/public/v1/live/trades-indexed (Premium), delivers
 per-fill `entry_type` from on-chain data 20-45s later with a server-side
-?types=mint,merge filter — use it when per-fill fidelity matters more than
-speed.
+?types=mint,merge filter; it trades speed for per-fill fidelity.
 
 ## Selected endpoints
 - GET /api/v2/whales/leaderboard — ranked smart whales
