@@ -52,11 +52,11 @@ mcp = FastMCP(
         "OrcaLayer provides read-only Polymarket smart-money analytics. Tools: a "
         "ranking of profitable traders (leaderboard), a wallet's profile and open "
         "positions (wallet_overview, wallet_positions), market search with Smart "
-        "Money wallet counts (markets), the Smart Money consensus on one market "
-        "versus its price (market_consensus), and recent trades by Smart Money "
-        "wallets (whale_alerts, Premium). Prompts hold ready-made analyses; "
-        "resources hold the classification methodology, a glossary and the REST "
-        "API reference."
+        "Money wallet counts (markets) and the Smart Money consensus on one market "
+        "versus its price (market_consensus). Requests that carry an OrcaLayer "
+        "Premium API key also get recent trades by Smart Money wallets "
+        "(whale_alerts). Prompts hold ready-made analyses; resources hold the "
+        "classification methodology, a glossary and the REST API reference."
     ),
 )
 
@@ -855,8 +855,9 @@ def whale_alerts(
     Polymarket wallets opening, adding to or closing positions.
 
     Needs an OrcaLayer Premium API key: on the hosted server it is the
-    ``Authorization: Bearer <key>`` request header, on the local stdio server
-    the ORCALAYER_API_KEY environment variable. Without a key the result is a
+    ``Authorization: Bearer <key>`` request header (the hosted server lists
+    this tool only for requests that carry one), on the local stdio server the
+    ORCALAYER_API_KEY environment variable. Without a key the result is a
     short notice on how to get one (no API call is made and it is not an
     error).
 
@@ -941,6 +942,30 @@ def whale_alerts(
             ),
         },
     }
+
+
+# ── tool list per caller (0.5.7) ─────────────────────────────────────────────
+# Viktor 07.10.2026: on the hosted server a request without a key does not see
+# the Premium tool. Claude's directory connectors carry no key header, so for
+# them whale_alerts could only ever answer "needs a key"; the directory review
+# expects every listed tool to work, and keyed access outside OAuth is not a
+# directory auth mode. Clients that send a key (Claude Code, Cursor, MCP
+# Inspector, custom connectors with headers) still list all six. The stdio
+# package keeps listing it, with the notice, so local users can find Premium.
+# A keyless call by name still returns the notice (the SDK only logs "not
+# listed"; FastMCP registers call_tool without input validation).
+_PREMIUM_TOOLS = frozenset({"whale_alerts"})
+_HIDE_PREMIUM_WITHOUT_KEY = False  # main() sets it for --http
+
+
+async def _list_tools_for_caller():
+    tools = await mcp.list_tools()
+    if _HIDE_PREMIUM_WITHOUT_KEY and not _request_api_key():
+        tools = [t for t in tools if t.name not in _PREMIUM_TOOLS]
+    return tools
+
+
+mcp._mcp_server.list_tools()(_list_tools_for_caller)
 
 
 # ── prompts ──────────────────────────────────────────────────────────────────
@@ -1073,9 +1098,9 @@ _API_REFERENCE = """# OrcaLayer public REST API
 Base: https://orcalayer.com
 - Public read endpoints: /api/v2/* (no key)
 - Premium endpoints: /api/public/v1/* (Bearer or x-api-key)
-- Hosted MCP server: https://orcalayer.com/mcp (Streamable HTTP; the same six
-  tools as this package; no authentication for the public tools, a Premium
-  key for whale_alerts as the `Authorization: Bearer <key>` request header)
+- Hosted MCP server: https://orcalayer.com/mcp (Streamable HTTP; the five
+  public tools need no authentication; whale_alerts is listed for requests
+  that carry a Premium key as the `Authorization: Bearer <key>` header)
 
 ## Auth
 Send a Premium key as `Authorization: Bearer <key>` or `x-api-key: <key>`. Public
@@ -1186,6 +1211,9 @@ def main(argv: list[str] | None = None) -> None:
     if not args.http and os.environ.get("ORCALAYER_MCP_HTTP", "") not in ("1", "true", "yes"):
         mcp.run()
         return
+
+    global _HIDE_PREMIUM_WITHOUT_KEY
+    _HIDE_PREMIUM_WITHOUT_KEY = True
 
     settings = mcp.settings
     settings.host = args.host
