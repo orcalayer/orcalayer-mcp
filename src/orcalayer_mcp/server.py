@@ -26,12 +26,14 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import threading
 import urllib.parse
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
-from typing import Any
+from typing import Any, Literal
 
+import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
@@ -91,7 +93,7 @@ def _read_only(title: str) -> ToolAnnotations:
 # and cached per key; a wrong key only surfaces when a Premium tool is called.
 _ENV_API_KEY = os.environ.get("ORCALAYER_API_KEY") or None
 _UA_SUFFIX = f"orcalayer-mcp/{_MCP_VERSION}"
-_clients: dict[str | None, OrcaLayer] = {}
+_clients: dict[tuple[str | None, float | None], OrcaLayer] = {}
 _clients_lock = threading.Lock()
 _CLIENT_CACHE_MAX = 256
 
@@ -133,9 +135,12 @@ def _request_api_key() -> str | None:
     return _ENV_API_KEY
 
 
-def _client_for(key: str | None) -> OrcaLayer:
+def _client_for(key: str | None, timeout: float | None = None) -> OrcaLayer:
+    """SDK client for a key (None = anonymous); ``timeout`` overrides the SDK's
+    30 s default for lookups that must fail fast (0.5.6, market_consensus)."""
+    cache_key = (key, timeout)
     with _clients_lock:
-        client = _clients.get(key)
+        client = _clients.get(cache_key)
         if client is None:
             if len(_clients) >= _CLIENT_CACHE_MAX:
                 # Keys in flight are few; a rare full reset beats an LRU here.
@@ -143,8 +148,10 @@ def _client_for(key: str | None) -> OrcaLayer:
             kwargs: dict[str, Any] = {"api_key": key, "user_agent_suffix": _UA_SUFFIX}
             if key is None and _ANON_BASE_URL:
                 kwargs["base_url"] = _ANON_BASE_URL
+            if timeout is not None:
+                kwargs["timeout"] = timeout
             client = OrcaLayer(**kwargs)
-            _clients[key] = client
+            _clients[cache_key] = client
         return client
 
 
@@ -235,18 +242,100 @@ def _real_failure(exc: OrcaLayerError) -> ToolError:
     Raising the returned ``ToolError`` makes FastMCP return an ``isError``
     tool result carrying this text, so the agent sees a real failure it can
     retry or report (e.g. a 429 with its Retry-After hint) — not a masked
-    "internal error". The API key is never included in the text.
+    "internal error". The API key is never included in the text, and on the
+    hosted server the internal API address is shown as the public one (0.5.6).
     """
-    return ToolError(_scrub(str(exc)))
+    message = _scrub(str(exc))
+    if _ANON_BASE_URL:
+        message = message.replace(_ANON_BASE_URL.rstrip("/"), "https://orcalayer.com")
+    return ToolError(message)
+
+
+# ── input checks (0.5.6) ─────────────────────────────────────────────────────
+# The directory review asks for actionable errors on invalid input instead of
+# silently accepted values. Found on 07.10.2026: an unknown category was
+# dropped by the leaderboard (all wallets came back) and matched nothing in
+# markets / whale_alerts; "Tech/AI", the name these docstrings use, reached the
+# leaderboard and the alerts as "TECH/AI", which they do not know (they use
+# "TECH"); "0x123" and empty addresses returned empty profiles or a bare 404.
+
+_CATEGORY_CODES = {
+    "crypto": "CRYPTO",
+    "politics": "POLITICS",
+    "sports": "SPORTS",
+    "geopolitics": "GEOPOLITICS",
+    "economics": "ECONOMICS",
+    "tech/ai": "TECH",
+    "tech": "TECH",
+    "ai": "TECH",
+}
+_CATEGORY_NAMES = '"Crypto", "Politics", "Sports", "Geopolitics", "Economics", "Tech/AI"'
+
+
+def _category(value: str | None) -> str | None:
+    """API category code for a category name (case-insensitive); None = all."""
+    if value is None:
+        return None
+    v = str(value).strip().lower()
+    if v in ("", "all"):
+        return None
+    code = _CATEGORY_CODES.get(v)
+    if code is None:
+        raise ToolError(f"Unknown category {value!r}. Accepted categories: {_CATEGORY_NAMES}; none = all.")
+    return code
+
+
+_ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]{40}")
+
+
+def _wallet_ref(address: str | int) -> str:
+    """A 0x address (format-checked) or a username, stripped."""
+    a = str(address).strip()
+    if not a:
+        raise ToolError(
+            "address is empty. Accepted: a wallet address (0x followed by 40 hexadecimal characters) "
+            "or a Polymarket username."
+        )
+    if a[:2].lower() == "0x" and not _ADDRESS_RE.fullmatch(a):
+        raise ToolError(
+            f"{a!r} is not a valid wallet address: a Polygon address is 0x followed by 40 hexadecimal characters."
+        )
+    return a
+
+
+_MARKET_ID_RE = re.compile(r"\d+|0x[0-9a-fA-F]{64}")
+_SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]*[a-z0-9]")
+# A known market resolves in ~1 s even cold; an unknown one sends the API into
+# a slow fallback (30-60 s, 07.10.2026), so a reference that search did not
+# resolve gets a short deadline and a plain "not found".
+_MARKET_LOOKUP_TIMEOUT = 10.0
+_MARKET_ACCEPTED = (
+    "Accepted: a market id (e.g. 559652), a Polymarket market or event slug, a polymarket.com URL, "
+    "or a 0x condition id. The markets tool searches markets by topic."
+)
+
+
+def _market_ref(market: str | int) -> str:
+    """The id / slug / condition id inside a market reference or a polymarket.com URL."""
+    m = str(market).strip()
+    low = m.lower()
+    if low.startswith(("http://", "https://")) or low.startswith(("polymarket.com/", "www.polymarket.com/")):
+        parsed = urllib.parse.urlparse(m if "://" in m else "https://" + m)
+        parts = [p for p in parsed.path.split("/") if p]
+        # polymarket.com/event/<event>[/<market>] and /market/<slug>: the last segment.
+        m = parts[-1] if parts else ""
+    if m[:2].lower() == "0x" or m.isdigit():
+        return m
+    return m.lower()
 
 
 # ── public tools ─────────────────────────────────────────────────────────────
 
 @mcp.tool(title="Smart-money leaderboard", annotations=_read_only("Smart-money leaderboard"))
 def leaderboard(
-    sort: str = "pnl",
+    sort: Literal["pnl", "win_rate", "volume", "trades"] = "pnl",
     category: str | None = None,
-    filter: str = "smart",
+    filter: Literal["smart", "all"] = "smart",
     limit: int = 20,
 ) -> dict:
     """Rank Polymarket traders from OrcaLayer's Smart Money set (or all wallets).
@@ -265,15 +354,16 @@ def leaderboard(
             "win_rate" orders by the leaderboard's stored win rate, which is
             computed differently from the market_win_rate shown, so rows can
             look out of order by that column.
-        category: Restrict to one category, e.g. "Crypto", "Sports",
-            "Politics", "Geopolitics", "Economics", "Tech/AI". None = all.
+        category: Restrict to wallets mainly trading one category: "Crypto",
+            "Politics", "Sports", "Geopolitics", "Economics" or "Tech/AI"
+            (case-insensitive). None = all.
         filter: "smart" (OrcaLayer's Smart Money set, default) or "all".
-        limit: How many wallets to return (1–100).
+        limit: How many wallets to return, 1–50 (larger values return 50).
     """
-    limit = max(1, min(limit, 100))
+    limit = max(1, min(limit, 50))
     try:
         data = _client().leaderboard(
-            sort=sort, category=category, filter=filter, limit=limit
+            sort=sort, category=_category(category), filter=filter, limit=limit
         )
     except OrcaLayerError as exc:
         raise _real_failure(exc)
@@ -342,11 +432,12 @@ def wallet_overview(address: str | int) -> dict:
     Args:
         address: 0x wallet address or OrcaLayer nickname.
     """
+    ref = _wallet_ref(address)
     try:
         # poll=False keeps the call non-blocking: a cold heavy wallet raises
         # WalletComputingError at once (no ~60s SDK sleep) so we can surface a
         # "computing, retry later" notice instead of hitting the client timeout.
-        data = _client().wallet_overview(str(address).strip(), poll=False)
+        data = _client().wallet_overview(ref, poll=False)
     except WalletComputingError as exc:
         # Cache miss on a heavy wallet: stats are not ready yet. Surface an
         # actionable "try again" notice — this is not a failure, so we return
@@ -365,13 +456,19 @@ def wallet_overview(address: str | int) -> dict:
     profile = data.get("profile", {}) or {}
     overview = data.get("overview", {}) or {}
     stats = data.get("stats", {}) or {}
+    if not (profile.get("address") or profile.get("proxy_wallet")):
+        # 0.5.6: an unknown username comes back as an all-null record.
+        raise ToolError(
+            f"No Polymarket wallet found for {ref!r}. Accepted: a wallet address (0x followed by 40 hexadecimal "
+            "characters) or a Polymarket username."
+        )
 
     # Rankings left the overview payload in a backend performance split
     # (12.05.2026: the overview always carries rankings = null). They live on
     # /wallet/{address}/rankings now, so fetch them here; a failure there must
     # not cost the caller the overview.
     rankings = None
-    wallet_ref = profile.get("proxy_wallet") or profile.get("address") or str(address).strip()
+    wallet_ref = profile.get("proxy_wallet") or profile.get("address") or ref
     try:
         raw = _client()._get(f"wallet/{urllib.parse.quote(str(wallet_ref))}/rankings", poll=False)
         r = (raw or {}).get("rankings") or None
@@ -466,10 +563,11 @@ def wallet_positions(address: str | int, limit: int = 15) -> dict:
             the response reports how many were omitted.
     """
     capped = max(1, min(limit, 50))
+    ref = _wallet_ref(address)
     try:
         # The API ignores the page limit and returns the wallet's full set
         # unordered, so we fetch all of them and do the top-N selection here.
-        data = _client().wallet_positions(str(address).strip(), limit=500)
+        data = _client().wallet_positions(ref, limit=500)
     except OrcaLayerError as exc:
         raise _real_failure(exc)
 
@@ -524,21 +622,23 @@ def markets(
 
     Args:
         q: Free-text query; also accepts a Polymarket URL or slug. "" browses.
-        category: One of "Crypto", "Geopolitics", "Sports", "Politics",
-            "Economics", "Tech/AI". None = all.
+            Open markets only.
+        category: One of "Crypto", "Politics", "Sports", "Geopolitics",
+            "Economics", "Tech/AI" (case-insensitive). None = all.
         min_volume: Minimum market volume in USD.
         min_whales: Minimum number of Smart Money wallets holding a position
             in the market (either side).
-        limit: How many markets to return (1–100).
+        limit: How many markets to return, 1–50 (larger values return 50).
     """
-    limit = max(1, min(limit, 100))
+    limit = max(1, min(limit, 50))
+    category_code = _category(category)
     try:
         # 0.5.2: q, address and market accept numbers too (a numeric market id,
         # a nickname or search term made of digits): MCP Inspector and some
         # models send them as JSON numbers, which a str-only parameter rejected.
         data = _client().markets(
             str(q),
-            category=category,
+            category=category_code,
             min_volume=min_volume,
             min_whales=min_whales,
             limit=limit,
@@ -566,12 +666,47 @@ def markets(
         "markets": shown,
         "total": data.get("total"),
         "notes": {
-            "smart_wallets_yes": (
-                "smart_wallets_yes / smart_wallets_no: how many wallets from " + _SMART_SET
-                + " hold YES / NO in this market, counted regardless of position size (a $5 holder counts like a "
-                "$500K one). market_consensus gives the capital-weighted split."
+            "smart_wallets_yes": _NOTE_SMART_WALLETS,
+            "volume_usd": _NOTE_MARKET_VOLUME,
+        },
+    }
+
+
+_NOTE_SMART_WALLETS = (
+    "smart_wallets_yes / smart_wallets_no: how many wallets from " + _SMART_SET
+    + " hold YES / NO in this market, counted regardless of position size (a $5 holder counts like a "
+    "$500K one). market_consensus gives the capital-weighted split."
+)
+_NOTE_MARKET_VOLUME = "volume_usd: the market's total traded volume in USD as Polymarket reports it."
+_EVENT_MARKETS_SHOWN = 15
+
+
+def _event_markets(event_slug: str, rows: list[dict]) -> dict:
+    """market_consensus answer for an event reference: the event's markets (0.5.6)."""
+    rows = sorted(rows, key=lambda r: _num(r.get("volume")) or 0, reverse=True)
+    return {
+        "event": event_slug,
+        "markets_in_event": len(rows),
+        "markets": [
+            {
+                "id": r.get("id"),
+                "question": r.get("question"),
+                "price_yes": r.get("price_yes"),
+                "smart_wallets_yes": r.get("whales_yes"),
+                "smart_wallets_no": r.get("whales_no"),
+                "volume_usd": r.get("volume"),
+                "end_date": r.get("end_date"),
+            }
+            for r in rows[:_EVENT_MARKETS_SHOWN]
+        ],
+        "notes": {
+            "event": (
+                f"{event_slug!r} is a Polymarket event that groups {len(rows)} open markets; the consensus is "
+                f"computed per market, and each market's id here is a valid market reference for market_consensus. "
+                f"Listed: up to {_EVENT_MARKETS_SHOWN} markets with the largest volume."
             ),
-            "volume_usd": "volume_usd: the market's total traded volume in USD as Polymarket reports it.",
+            "smart_wallets_yes": _NOTE_SMART_WALLETS,
+            "volume_usd": _NOTE_MARKET_VOLUME,
         },
     }
 
@@ -594,17 +729,46 @@ def market_consensus(market: str | int) -> dict:
     fields measure positioning against the price; they are not evidence that
     the price is wrong.
 
+    An event slug or event URL (a Polymarket event groups several markets)
+    returns the event's markets with their ids and Smart Money wallet counts
+    instead, since the consensus is per market.
+
     Args:
-        market: Market id, Polymarket slug or URL, or 0x condition id.
+        market: Market id, Polymarket market or event slug, polymarket.com
+            URL, or 0x condition id.
     """
-    # Accept a full Polymarket URL by reducing it to its slug.
-    m = str(market).strip()
-    if m.startswith("http"):
-        m = m.rstrip("/").rsplit("/", 1)[-1]
+    ref = _market_ref(market)
+    if not ref:
+        raise ToolError("market is empty. " + _MARKET_ACCEPTED)
+    if not (_MARKET_ID_RE.fullmatch(ref) or _SLUG_RE.fullmatch(ref)):
+        raise ToolError(f"{str(market).strip()!r} is not a market reference. " + _MARKET_ACCEPTED)
+
+    key = _request_api_key()
+    if not _MARKET_ID_RE.fullmatch(ref):
+        # 0.5.6: slugs go through market search first (~1 s). It knows open
+        # markets by their own slug and by their event's slug; a miss (closed
+        # market or unknown slug) falls through to the direct lookup below.
+        try:
+            found = (_client_for(key).markets(ref, limit=100) or {}).get("markets") or []
+        except OrcaLayerError:
+            found = []
+        exact = [r for r in found if (r.get("slug") or "").lower() == ref]
+        event = [r for r in found if (r.get("event_slug") or "").lower() == ref]
+        if exact:
+            ref = str(exact[0].get("id"))
+        elif len(event) == 1:
+            ref = str(event[0].get("id"))
+        elif event:
+            return _event_markets(ref, event)
+
     try:
-        data = _client().market(m)
+        data = _client_for(key, timeout=_MARKET_LOOKUP_TIMEOUT).market(ref)
     except OrcaLayerError as exc:
+        if isinstance(exc.__cause__, httpx.TimeoutException):
+            raise ToolError(f"No Polymarket market found for {ref!r} (lookup timed out). " + _MARKET_ACCEPTED)
         raise _real_failure(exc)
+    if not isinstance(data, dict) or data.get("error") or not (data.get("market") or {}).get("id"):
+        raise ToolError(f"No Polymarket market found for {ref!r}. " + _MARKET_ACCEPTED)
 
     mkt = data.get("market", {}) or {}
     whales = data.get("whales", {}) or {}
@@ -697,10 +861,13 @@ def whale_alerts(
     error).
 
     Args:
-        minutes: Lookback window in minutes (max 1440 = 24h).
+        minutes: Lookback window in minutes, 1–1440 (24h); values outside
+            the range are clamped to it.
         min_usd: Minimum trade size in USD.
-        category: Restrict to one market category. None = all.
-        limit: How many alerts to return (1–100).
+        category: Restrict to one market category: "Crypto", "Politics",
+            "Sports", "Geopolitics", "Economics" or "Tech/AI"
+            (case-insensitive). None = all.
+        limit: How many alerts to return, 1–50 (larger values return 50).
     """
     # Pre-check the key so the "needs Premium" path is an actionable message,
     # never a failure and never an API round-trip.
@@ -714,10 +881,13 @@ def whale_alerts(
             "ORCALAYER_API_KEY environment variable."
         )
 
-    limit = max(1, min(limit, 100))
+    limit = max(1, min(limit, 50))
+    minutes = max(1, min(minutes, 1440))
+    min_usd = max(0.0, min_usd)
+    category_code = _category(category)
     try:
         data = _client_for(key).whale_alerts(
-            minutes=minutes, min_usd=min_usd, category=category, limit=limit
+            minutes=minutes, min_usd=min_usd, category=category_code, limit=limit
         )
     except AuthenticationError as exc:
         # Distinguish a rejected key (401) from a valid key on a non-Premium
@@ -846,8 +1016,7 @@ def territorial_markets_review(threat_level: str = "") -> str:
 _METHODOLOGY = """# OrcaLayer classification methodology
 
 OrcaLayer reads every Polymarket trade directly from the Polygon blockchain
-(1.2B+ on-chain fills across ~1.39M markets) and classifies the wallets behind
-them.
+(1.5B+ on-chain fills) and classifies the wallets behind them.
 
 ## Smart money
 A wallet is flagged **smart money** only when ALL of these hold:
