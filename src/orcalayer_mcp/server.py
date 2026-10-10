@@ -168,12 +168,6 @@ def _client() -> OrcaLayer:
 # tools must not meet two different numbers under the same label, so the tools
 # expose one explicitly named field per concept and a short `notes` block.
 
-# Fills before this date sit in OrcaLayer's history table, where part of the
-# 2024 rows carry a wrong time (~11 months early; block numbers are right,
-# found 06.10.2026, correction pending). Until it is corrected, first/last
-# trade dates before the cutoff are not shown as exact dates.
-_TRUSTED_TRADE_TIME_FROM = int(datetime(2025, 10, 1, tzinfo=timezone.utc).timestamp())
-
 _SMART_SET = (
     "OrcaLayer's Smart Money set: wallets that pass the quality test in the orcalayer://methodology "
     "resource (about 208K of ~1.4M tracked wallets). It is a quality filter, not a size filter"
@@ -185,15 +179,13 @@ def _num(value: Any) -> Any:
 
 
 def _trade_date(ts: Any) -> str | None:
-    """ISO date of a trade timestamp, or a plain statement when it cannot be trusted."""
+    """ISO date (UTC) of a trade timestamp."""
     try:
         t = int(ts)
     except (TypeError, ValueError):
         return None
     if t <= 0:
         return None
-    if t < _TRUSTED_TRADE_TIME_FROM:
-        return "before 2025-10 (exact date not available)"
     return datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
@@ -216,8 +208,8 @@ _NOTE_VOLUME = (
     "October 2025 are only partly indexed, so for older wallets it can be well below Polymarket's number."
 )
 _NOTE_TRADE_DATES = (
-    "last_trade / first_trade: dates of fills in OrcaLayer's index. Dates before October 2025 are shown only as "
-    "'before 2025-10' while a timestamp correction of the older history is pending."
+    "last_trade / first_trade: UTC dates of the wallet's fills in OrcaLayer's index. Fills before October 2025 are "
+    "only partly indexed, so for older wallets first_trade can be later than their real first Polymarket trade."
 )
 
 
