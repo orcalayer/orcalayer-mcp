@@ -404,6 +404,31 @@ def leaderboard(
     }
 
 
+_NOTE_FORM_VS_PRICE = (
+    "form_vs_price: how much more often the wallet won than its entry price implied, in cents per position, over markets "
+    "resolved in the last window_days days (only wallets with 20+ such positions; otherwise null). Adjusted for the "
+    "favourite / long-shot bias (each position is compared with all traders at the same entry price) and pulled towards "
+    "zero for small samples. percentile: rank among wallets with the label, 100 = best. by_entry_price: raw positions, "
+    "share won and average entry price per price band. sports_in_play_share: share of sports positions bought after the "
+    "game started. Past form is not a guarantee (orcalayer.com/methodology)."
+)
+
+
+def _form_vs_price(f):
+    """Compact form-vs-price block from the overview payload; None when the wallet has no label."""
+    if not isinstance(f, dict) or not f.get("available"):
+        return None
+    return {
+        "edge_cents": f.get("edge_cents"),
+        "percentile": f.get("percentile"),
+        "positions": f.get("positions"),
+        "window_days": f.get("window_days"),
+        "by_entry_price": f.get("by_entry_price"),
+        "sports_in_play_share": f.get("sports_in_play_share"),
+        "as_of": f.get("as_of"),
+    }
+
+
 @mcp.tool(title="Wallet overview", annotations=_read_only("Wallet overview"))
 def wallet_overview(address: str | int) -> dict:
     """Summarize one wallet's trading profile and performance.
@@ -510,6 +535,7 @@ def wallet_overview(address: str | int) -> dict:
         # Volume share per market category (e.g. {"CRYPTO": 86.1, ...}).
         "categories": data.get("categories"),
         "rankings": rankings,
+        "form_vs_price": _form_vs_price(data.get("form_vs_price")),
         # True when heavy side-stats timed out: core stats above are still
         # valid, some derived fields may be missing.
         "degraded": data.get("degraded", False),
@@ -537,6 +563,7 @@ def wallet_overview(address: str | int) -> dict:
             ),
             "trade_dates": _NOTE_TRADE_DATES,
             "rankings": "rankings: position among `out_of` tracked wallets, 1 = best; null when the wallet is not ranked.",
+            "form_vs_price": _NOTE_FORM_VS_PRICE,
         },
     }
 
