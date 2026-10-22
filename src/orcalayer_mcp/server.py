@@ -410,7 +410,7 @@ _NOTE_FORM_VS_PRICE = (
     "favourite / long-shot bias (each position is compared with all traders at the same entry price) and pulled towards "
     "zero for small samples. percentile: rank among wallets with the label, 100 = best. by_entry_price: raw positions, "
     "share won and average entry price per price band. sports_in_play_share: share of sports positions bought after the "
-    "game started. Past form is not a guarantee (orcalayer.com/methodology)."
+    "game started. Past form is not a guarantee."
 )
 
 
