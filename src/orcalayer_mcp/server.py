@@ -501,6 +501,19 @@ def wallet_overview(address: str | int) -> dict:
     except Exception:  # noqa: BLE001 — rankings are optional context
         rankings = None
 
+    # 0.5.10 (28.10.2026): the overview's stats.pnl_7d is realized P&L of the positions that CLOSED in the past 7 days,
+    # including what they earned before the window: 2-3x Polymarket's week on wallets that closed long-held winners.
+    # pnl_7d is now the change over the 1W hourly series, the number the wallet page and Polymarket's 1W chart show;
+    # the closed-positions sum stays under its own name. A failure here must not cost the caller the overview.
+    pnl_7d = None
+    try:
+        hist = _client()._get(f"wallet/{urllib.parse.quote(str(wallet_ref))}/pnl-history", {"period": "1W"}, poll=False)
+        points = (hist or {}).get("points") or []
+        if len(points) >= 2:
+            pnl_7d = round(float(points[-1]["p"]) - float(points[0]["p"]), 2)
+    except Exception:  # noqa: BLE001 — optional context, like rankings
+        pnl_7d = None
+
     first_ts = overview.get("first_trade")
     last_ts = overview.get("last_trade")
     return {
@@ -514,7 +527,8 @@ def wallet_overview(address: str | int) -> dict:
             "total_pnl": stats.get("total_pnl"),
             "unrealized_pnl": stats.get("unrealized_pnl"),
             "pnl_24h": stats.get("pnl_24h"),
-            "pnl_7d": stats.get("pnl_7d"),
+            "pnl_7d": pnl_7d,
+            "realized_pnl_closed_7d": stats.get("pnl_7d"),
             "market_win_rate": stats.get("market_win_rate"),
             "market_wins": stats.get("market_wins"),
             "market_losses": stats.get("market_losses"),
@@ -542,6 +556,13 @@ def wallet_overview(address: str | int) -> dict:
         "as_of": data.get("as_of"),
         "notes": {
             "total_pnl": _NOTE_PNL,
+            "pnl_7d": (
+                "pnl_7d: change in the wallet's Polymarket P&L over the past 7 days, open positions included, from the "
+                "hourly series behind Polymarket's 1W profile chart; null when unavailable. Polymarket's weekly "
+                "leaderboard can differ for fast-moving wallets. realized_pnl_closed_7d: realized P&L of the positions "
+                "that closed in the past 7 days, including what they gained or lost before the window, so it can "
+                "exceed pnl_7d and even lifetime total_pnl."
+            ),
             "market_win_rate": _NOTE_MARKET_WIN_RATE,
             "profit_factor": (
                 "profit_factor: net profit factor from OrcaLayer's FIFO P&L reconstruction, not capped. The leaderboard "
