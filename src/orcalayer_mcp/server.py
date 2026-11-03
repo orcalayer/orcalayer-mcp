@@ -5,8 +5,9 @@ does not reimplement any API logic — every tool delegates to the SDK and
 shapes the result for an LLM agent.
 
 Public tools (``leaderboard``, ``wallet_overview``, ``wallet_positions``,
-``markets``, ``market_consensus``) work anonymously. ``whale_alerts`` is
-Premium and needs an API key.
+``markets``, ``market_consensus``) work anonymously. ``whale_alerts``,
+``pnl_leaderboard`` and ``resolution_events`` (0.5.11) are Premium and need an
+API key.
 
 Two transports (0.4.0):
 
@@ -55,7 +56,9 @@ mcp = FastMCP(
         "Money wallet counts (markets) and the Smart Money consensus on one market "
         "versus its price (market_consensus). Requests that carry an OrcaLayer "
         "Premium API key also get recent trades by Smart Money wallets "
-        "(whale_alerts). Prompts hold ready-made analyses; resources hold the "
+        "(whale_alerts), the realized PnL ranking over 7 or 30 days "
+        "(pnl_leaderboard) and markets just proposed, disputed, resolved or "
+        "reopened (resolution_events). Prompts hold ready-made analyses; resources hold the "
         "classification methodology, a glossary and the REST API reference."
     ),
 )
@@ -984,17 +987,178 @@ def whale_alerts(
     }
 
 
+# ── Premium: window PnL and market resolution events (0.5.11) ────────────────
+# Viktor's Premium plan, 03.11.2026 (backend c8fc488): both moved into Premium; the SDK has no methods for them yet, so
+# they go through its generic Premium GET (the site proxy forwards /api/public/v1/<path> to /api/v2/<path>).
+
+def _premium_notice(tool: str) -> str:
+    return (
+        f"{tool} is a Premium feature and needs an OrcaLayer API key. Get one at https://orcalayer.com/pricing. "
+        "On the hosted server (https://orcalayer.com/mcp) send it as the request header "
+        "`Authorization: Bearer <key>`; for the local stdio server set the ORCALAYER_API_KEY environment variable."
+    )
+
+
+def _premium_get(key: str, path: str, params: dict) -> Any:
+    try:
+        return _client_for(key)._get(path, params, premium_only=True)
+    except AuthenticationError as exc:
+        if exc.status_code == 403:
+            raise ToolError(
+                "Your API key is valid but your plan does not include Premium access. "
+                "Upgrade at https://orcalayer.com/pricing."
+            )
+        raise ToolError("Your API key was rejected (invalid or expired). Check it at https://orcalayer.com/settings.")
+    except OrcaLayerError as exc:
+        raise _real_failure(exc)
+
+
+_DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+@mcp.tool(title="Realized PnL leaderboard for 7 / 30 days (Premium)",
+          annotations=_read_only("Realized PnL leaderboard for 7 / 30 days (Premium)"))
+def pnl_leaderboard(
+    window: int = 7,
+    order: str = "desc",
+    as_of: str | None = None,
+    min_resolved: int = 0,
+    limit: int = 20,
+) -> Any:
+    """Polymarket wallets ranked by realized PnL inside a 7- or 30-day window
+    (Premium).
+
+    Who made (or lost) the most over the last week or month, not over all
+    time. Realized PnL is Polymarket's own definition: a position counts when
+    its market resolves or when it is sold, after fees. Rankings are rebuilt
+    every night; every response carries the exact UTC window and whether the
+    latest days are still provisional. Methodology:
+    https://orcalayer.com/docs#window-pnl
+
+    Needs an OrcaLayer Premium API key (hosted server: the
+    ``Authorization: Bearer <key>`` header; stdio: ORCALAYER_API_KEY).
+    Without a key the result is a short notice, not an error.
+
+    Args:
+        window: 7 or 30 (Polymarket days ending on ``as_of``).
+        order: "desc" = biggest realized profit first, "asc" = biggest loss.
+        as_of: YYYY-MM-DD, last day of the window (7-day windows from
+            2026-06-07, 30-day from 2026-06-30). None = latest ranked day.
+        min_resolved: 0, 1, 5 or 20: only wallets that held a position in at
+            least that many markets resolved inside the window.
+        limit: How many wallets, 1–100 (larger values return 100).
+    """
+    key = _request_api_key()
+    if not key:
+        return _premium_notice("pnl_leaderboard")
+    if window not in (7, 30):
+        raise ToolError("window must be 7 or 30.")
+    order = str(order or "desc").strip().lower()
+    if order not in ("desc", "asc"):
+        raise ToolError('order must be "desc" (biggest profit first) or "asc" (biggest loss first).')
+    if as_of is not None and not _DAY_RE.fullmatch(str(as_of).strip()):
+        raise ToolError("as_of must be a date YYYY-MM-DD, or None for the latest ranked day.")
+    if min_resolved not in (0, 1, 5, 20):
+        raise ToolError("min_resolved must be 0, 1, 5 or 20.")
+    limit = max(1, min(int(limit), 100))
+    data = _premium_get(key, "business/pnl-leaderboard", {
+        "window": window, "order": order, "as_of": as_of.strip() if as_of else None,
+        "min_resolved": min_resolved, "limit": limit,
+    })
+    if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
+        return data
+    return {
+        "window": {k: data.get(k) for k in ("as_of", "window", "window_start_utc", "window_end_utc",
+                                            "provisional", "settled_through", "ranked_count")},
+        "order": data.get("order"),
+        "rows": [
+            {k: r.get(k) for k in ("rank", "wallet", "pnl_usd", "volume_usd", "trades", "resolved_markets",
+                                   "resolved_won", "pm_data_gap")}
+            for r in data["rows"] if isinstance(r, dict)
+        ],
+        "notes": {
+            "pnl_usd": "Realized PnL inside the window, after fees (Polymarket's definition); not lifetime P&L.",
+            "provisional": "true = the latest days can still gain wallets; final once as_of <= settled_through.",
+            "pm_data_gap": "Non-null = Polymarket's own daily data has a gap for this wallet (missing volume, USD).",
+            "wallet_pages": "https://orcalayer.com/wallet/<wallet> for the full profile.",
+        },
+    }
+
+
+_RESOLUTION_TYPES = ("proposed", "disputed", "resolved", "reopened")
+
+
+@mcp.tool(title="Market resolution events (Premium)", annotations=_read_only("Market resolution events (Premium)"))
+def resolution_events(
+    minutes: int = 60,
+    types: list[str] | None = None,
+    category: str | None = None,
+    min_volume: float = 0,
+    limit: int = 50,
+) -> Any:
+    """Markets that were just proposed, disputed, resolved or reopened on
+    Polymarket (Premium).
+
+    Each event is one step of a market's settlement: ``proposed`` (an outcome
+    was proposed to the UMA oracle), ``disputed``, ``resolved`` (settled, with
+    ``outcome.winner``) and ``reopened`` (a closed market is trading again).
+    Polymarket itself does not notify about these. Events are detected within
+    about 10 minutes and kept for 14 days.
+
+    Needs an OrcaLayer Premium API key (hosted server: the
+    ``Authorization: Bearer <key>`` header; stdio: ORCALAYER_API_KEY).
+    Without a key the result is a short notice, not an error.
+
+    Args:
+        minutes: Look-back window in minutes, 1–20160 (14 days).
+        types: Any of "proposed", "disputed", "resolved", "reopened";
+            None = all.
+        category: One market category: "Crypto", "Politics", "Sports",
+            "Geopolitics", "Economics" or "Tech/AI" (case-insensitive).
+            None = all.
+        min_volume: Only markets with at least this traded volume, USD.
+        limit: How many events, 1–200 (larger values return 200).
+    """
+    key = _request_api_key()
+    if not key:
+        return _premium_notice("resolution_events")
+    t = sorted({str(x).strip().lower() for x in (types or []) if str(x).strip()})
+    bad = [x for x in t if x not in _RESOLUTION_TYPES]
+    if bad:
+        raise ToolError(f"Unknown event type(s): {', '.join(bad)}. Accepted: {', '.join(_RESOLUTION_TYPES)}.")
+    minutes = max(1, min(int(minutes), 14 * 1440))
+    limit = max(1, min(int(limit), 200))
+    data = _premium_get(key, "markets/resolution-events", {
+        "minutes": minutes, "types": ",".join(t) or None, "categories": _category(category),
+        "min_volume": max(0.0, float(min_volume)), "limit": limit,
+    })
+    if not isinstance(data, dict) or not isinstance(data.get("events"), list):
+        return data
+    return {
+        "events": data["events"],
+        "count": len(data["events"]),
+        "has_more": data.get("has_more"),
+        "notes": {
+            "order": "Oldest first from `minutes` ago; has_more = there are more events in the window (raise limit or narrow it).",
+            "outcome": ("outcome.winner is set only on resolved events: \"Yes\" / \"No\", the outcome name, or \"50-50\"; "
+                        "outcome.prices are the market prices when the event was read."),
+            "detected_at": "When OrcaLayer saw the change (within ~10 min of it on Polymarket).",
+            "market": "market.id opens at https://orcalayer.com/market/<id>; market.volume is lifetime traded volume, USD.",
+        },
+    }
+
+
 # ── tool list per caller (0.5.7) ─────────────────────────────────────────────
 # Viktor 07.10.2026: on the hosted server a request without a key does not see
 # the Premium tool. Claude's directory connectors carry no key header, so for
 # them whale_alerts could only ever answer "needs a key"; the directory review
 # expects every listed tool to work, and keyed access outside OAuth is not a
 # directory auth mode. Clients that send a key (Claude Code, Cursor, MCP
-# Inspector, custom connectors with headers) still list all six. The stdio
+# Inspector, custom connectors with headers) still list all of them. The stdio
 # package keeps listing it, with the notice, so local users can find Premium.
 # A keyless call by name still returns the notice (the SDK only logs "not
 # listed"; FastMCP registers call_tool without input validation).
-_PREMIUM_TOOLS = frozenset({"whale_alerts"})
+_PREMIUM_TOOLS = frozenset({"whale_alerts", "pnl_leaderboard", "resolution_events"})  # 0.5.11: + the two plan tools
 _HIDE_PREMIUM_WITHOUT_KEY = False  # main() sets it for --http
 
 
@@ -1139,8 +1303,9 @@ Base: https://orcalayer.com
 - Public read endpoints: /api/v2/* (no key)
 - Premium endpoints: /api/public/v1/* (Bearer or x-api-key)
 - Hosted MCP server: https://orcalayer.com/mcp (Streamable HTTP; the five
-  public tools need no authentication; whale_alerts is listed for requests
-  that carry a Premium key as the `Authorization: Bearer <key>` header)
+  public tools need no authentication; whale_alerts, pnl_leaderboard and
+  resolution_events are listed for requests that carry a Premium key as the
+  `Authorization: Bearer <key>` header)
 
 ## Auth
 Send a Premium key as `Authorization: Bearer <key>` or `x-api-key: <key>`. Public

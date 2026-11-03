@@ -18,7 +18,7 @@ Two ways to use it:
 - **Local (stdio):** `uvx orcalayer-mcp`, for Claude Desktop and other local clients.
 
 Either way it is a thin wrapper over the [`orcalayer`](https://pypi.org/project/orcalayer/)
-Python SDK and exposes six read-only tools:
+Python SDK and exposes eight read-only tools:
 
 | Tool | What it does | Key |
 |---|---|---|
@@ -28,8 +28,10 @@ Python SDK and exposes six read-only tools:
 | `markets` | Track smart money flows: search markets and see how many Smart Money wallets hold each side | No |
 | `market_consensus` | Smart-money consensus on one market vs its price (head-count + capital-weighted) | No |
 | `whale_alerts` | Real-time alerts on profitable wallets: live feed of smart-whale trades | Premium |
+| `pnl_leaderboard` | Wallets ranked by realized P&L over the last 7 or 30 days (any window since June 2026) | Premium |
+| `resolution_events` | Markets just proposed, disputed, resolved (with the winner) or reopened | Premium |
 
-Public tools work anonymously. `whale_alerts` needs a Premium API key
+Public tools work anonymously. `whale_alerts`, `pnl_leaderboard` and `resolution_events` need a Premium API key
 ([get one](https://orcalayer.com/pricing)): on the hosted server send it as the
 `Authorization: Bearer <key>` request header (clients that support request
 headers for a connector), on the local server set the `ORCALAYER_API_KEY`
@@ -96,7 +98,7 @@ Add this to your `claude_desktop_config.json`
 }
 ```
 
-The public tools work as-is. For the Premium `whale_alerts` tool, add your
+The public tools work as-is. For the Premium tools (`whale_alerts`, `pnl_leaderboard`, `resolution_events`), add your
 API key ([get one](https://orcalayer.com/pricing)):
 
 ```json
@@ -115,10 +117,10 @@ Restart Claude Desktop after editing the config.
 
 ## Use the hosted server
 
-The same six tools, prompts and resources are served at
+The same eight tools, prompts and resources are served at
 `https://orcalayer.com/mcp` over Streamable HTTP. No account is needed for the
 public tools. In Claude: Settings → Connectors → Add custom connector → paste
-the URL. For `whale_alerts`, send your Premium key as the
+the URL. For the Premium tools, send your Premium key as the
 `Authorization: Bearer <key>` request header where your client supports
 connector headers; keys are never accepted in the URL.
 
