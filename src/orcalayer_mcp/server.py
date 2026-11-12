@@ -173,7 +173,7 @@ def _client() -> OrcaLayer:
 
 _SMART_SET = (
     "OrcaLayer's Smart Money set: wallets that pass the quality test in the orcalayer://methodology "
-    "resource (about 208K of ~1.4M tracked wallets). It is a quality filter, not a size filter"
+    "resource (about 190K of ~1.66M scored wallets). It is a quality filter, not a size filter"
 )
 
 
@@ -568,7 +568,7 @@ def wallet_overview(address: str | int) -> dict:
             ),
             "market_win_rate": _NOTE_MARKET_WIN_RATE,
             "profit_factor": (
-                "profit_factor: net profit factor from OrcaLayer's FIFO P&L reconstruction, not capped. The leaderboard "
+                "profit_factor: net profit factor from OrcaLayer's net-position P&L per resolved market, not capped. The leaderboard "
                 "tool shows a different figure (gross over closed positions, capped at 99.99)."
             ),
             "is_smart": (
@@ -1245,40 +1245,92 @@ def territorial_markets_review(threat_level: str = "") -> str:
 _METHODOLOGY = """# OrcaLayer classification methodology
 
 OrcaLayer reads every Polymarket trade directly from the Polygon blockchain
-(1.5B+ on-chain fills) and classifies the wallets behind them.
+(1.5B+ on-chain fills across 5M+ markets, from 3.2M+ wallets) and computes
+positions, win rates, rankings and badges from that record with its own
+formulas. Polymarket's own figures appear in two named places: a second
+opinion on the Smart Money badge, and the lifetime P&L headline on a wallet
+page.
+
+## Who is scored
+Only wallets with at least 10 resolved markets are scored (about 1.66M,
+November 2026).
 
 ## Smart money
-A wallet is flagged **smart money** only when ALL of these hold:
+A wallet is flagged **smart money** only when ALL four hold:
 - win rate >= 55% measured **by resolved markets** (not by individual trades),
-- positive lifetime realized P&L,
+- positive total P&L across its resolved markets,
 - not flagged as a farmer or bot,
-- at least 10 resolved markets of history.
-About 208K of ~1.42M tracked wallets qualify.
+- not losing by Polymarket's own count: if the lifetime profit Polymarket
+  reports, no more than three days old, is zero or negative, the badge is
+  withheld. This check can only remove a badge, never grant one; it removes
+  roughly one candidate in twenty.
+About 190K wallets qualify (November 2026).
 
 ## Farmer filter
-A farmer's fingerprint is an average buy price above ~95c: such an average
+A farmer's fingerprint is an average buy price above 95c: such an average
 cannot be accumulated by taking real uncertain positions, and it manufactures
-"flawless" 95-100% win rates on near-decided markets. ~16% of high-P&L wallets
-are farmers. Bots (very high trade counts at tiny average size) and protocol
-router contracts are excluded separately.
+"flawless" 95-100% win rates on near-decided markets. On 27.10.2026 farmers
+were 64% of scored wallets with a win rate of 90% or more, and about one in
+five profitable ones. Bots (more than 500,000 trades at an average size under
+$20) are detected separately; Polymarket's protocol router contracts are
+excluded platform-wide.
 
 ## NegRisk correction
-On linked multi-outcome (NegRisk) markets, resolved P&L is divided by 2 and
-split/merge flows are attributed correctly, removing double-counting so win
-rates stay honest.
+On linked multi-outcome (NegRisk) markets the resolved profit is halved, and
+when a wallet traded both sides of a market the $1 of a minted or merged full
+set is charged half to each side, so a multi-outcome win counts as one win.
+Win rate is the share of a wallet's resolved markets that ended in profit:
+markets, not individual fills.
 
 ## P&L method
-Per-wallet, per-market FIFO (first-in, first-out), so profit reflects the real
-sequence of entries and exits.
+For every wallet, market and outcome OrcaLayer keeps a running net position:
+tokens bought minus tokens sold, dollars paid minus dollars received. When the
+market resolves, the result is what the remaining tokens pay out minus the net
+dollars put in. A market is a win when that result is above zero, and total
+P&L is the sum over resolved markets only. For a settled market this gives the
+same total as first-in, first-out lot accounting: lot order changes when
+profit is recognised, not how much.
+
+## Polymarket's numbers, and what OrcaLayer counts beyond them
+- The lifetime P&L headline on a wallet page is Polymarket's figure; OrcaLayer
+  shows its own computation when Polymarket has none.
+- Win rate, wins and losses, and profit factor are OrcaLayer's, per resolved
+  market.
+- The index also counts what a profile page does not show: a losing position
+  its owner never redeemed is still a loss, minted and merged full sets are
+  part of what a position cost, and win rate covers every resolved market a
+  wallet touched, not only the positions it chose to close.
+- Because the two are counted differently, they can differ. When a fresh
+  Polymarket figure and OrcaLayer's computation disagree on whether a wallet
+  is up or down and both amounts are above $100, the wallet page marks
+  OrcaLayer's derived statistics as low confidence.
+
+## Smart money consensus
+A market's consensus is a head count of Smart Money wallets on Yes against No
+(one wallet, one vote; a wallet holding both sides counts on both), plus a net
+reading: the share of dollars on Yes among wallets that take one side. When
+the two disagree, the dollar reading is the stronger one. Consensus describes
+positioning against the current price; it is not evidence that the price is
+wrong.
+
+## ISW frontline signals
+For Ukraine territorial-control markets OrcaLayer compares each market's point
+or zone with ISW's daily map: control, advances and 24-hour gains for capture
+markets, plus infiltration for markets that resolve on Russian forces entering
+a place. CRITICAL means the condition already looks met on the map; below
+that, HIGH (about 500 m), MEDIUM (about 1.5 km), LOW (about 3 km), otherwise
+SAFE. A level is a reading of ISW's map, not a resolution.
 
 Full version: https://orcalayer.com/methodology
 """
 
 _GLOSSARY = """# Prediction-markets glossary (OrcaLayer)
 
-- **Smart money** — wallet with >=55% market win rate, positive P&L, not a
-  farmer/bot, 10+ resolved markets. The signal OrcaLayer tracks.
-- **Farmer** — wallet whose average buy price is above ~95c; inflates win rate by
+- **Smart money** — wallet that passes OrcaLayer's four-part test: >=55% market
+  win rate, positive P&L on resolved markets, not a farmer/bot, and not losing by
+  Polymarket's own count; only wallets with 10+ resolved markets are scored. The
+  signal OrcaLayer tracks.
+- **Farmer** — wallet whose average buy price is above 95c; inflates win rate by
   buying near-decided markets. Excluded from smart-money stats.
 - **Hedger** — holds offsetting positions on both sides; apparent "profit" can be
   a structure rather than directional edge.
@@ -1286,7 +1338,8 @@ _GLOSSARY = """# Prediction-markets glossary (OrcaLayer)
   not a directional call.
 - **NegRisk** — Polymarket's linked multi-outcome markets; resolved P&L is halved
   and split/merge flows attributed, so nothing is counted twice.
-- **FIFO P&L** — first-in, first-out realized profit, per wallet per market.
+- **Net-position P&L** — what the remaining tokens pay out at settlement minus the
+  net dollars put in, per wallet, market and outcome; resolved markets only.
 - **Profit factor** — gross wins divided by gross losses.
 - **Alignment / consensus** — how strongly smart money agrees on one side of a
   market.
