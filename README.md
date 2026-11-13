@@ -7,8 +7,13 @@
 [![Glama MCP](https://glama.ai/mcp/servers/orcalayer/orcalayer-mcp/badges/score.svg)](https://glama.ai/mcp/servers/orcalayer/orcalayer-mcp)
 [![orcalayer-mcp MCP server](https://glama.ai/mcp/servers/orcalayer/orcalayer-mcp/badges/card.svg)](https://glama.ai/mcp/servers/orcalayer/orcalayer-mcp)
 
-Model Context Protocol (MCP) server for the [OrcaLayer API](https://orcalayer.com) —
-Polymarket whale and market analytics inside Claude, Cursor and other MCP clients.
+MCP server for the [OrcaLayer](https://orcalayer.com) Polymarket smart money and whale analytics API,
+inside Claude, Cursor and other MCP clients.
+
+OrcaLayer is an analytics layer on top of Polymarket's free Data API: the official API returns raw trades,
+positions and P&L, and OrcaLayer returns what you would otherwise compute from them: win rate per resolved
+market, smart money, farmer and bot flags, smart money consensus on each market, and whale alerts.
+[What it adds over the official API](https://orcalayer.com/solutions/polymarket-smart-money-api).
 
 Two ways to use it:
 
