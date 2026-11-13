@@ -1,8 +1,8 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.orcalayer/orcalayer-mcp",
-  "description": "Polymarket smart-money analytics: whale leaderboard, wallet P&L, market consensus, live alerts",
-  "version": "0.5.8",
+  "description": "Polymarket smart money and whale analytics: win rate, smart money flags, consensus, whale alerts",
+  "version": "0.5.13",
   "websiteUrl": "https://orcalayer.com",
   "repository": {
     "url": "https://github.com/orcalayer/orcalayer-mcp",
@@ -18,13 +18,13 @@
     {
       "registryType": "pypi",
       "identifier": "orcalayer-mcp",
-      "version": "0.5.8",
+      "version": "0.5.13",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
-          "description": "Optional Premium API key from orcalayer.com/pricing (enables the whale_alerts tool). Public tools work without it.",
+          "description": "Optional Premium API key from orcalayer.com/pricing: adds the whale_alerts, pnl_leaderboard and resolution_events tools. Public tools work without it.",
           "isRequired": false,
           "format": "string",
           "isSecret": true,
