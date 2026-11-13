@@ -1,0 +1,55 @@
+# Publish server.json to the official MCP registry (registry.modelcontextprotocol.io).
+#
+# The registry accepts the organization namespace io.github.orcalayer/* only from GitHub Actions (OIDC) or from a token
+# that can read organization roles; the interactive device login can publish only a personal namespace. This job runs
+# when server.json (or this file) changes on main and skips quietly if that version is already in the registry.
+# Release order: publish the PyPI package first (the registry checks the "mcp-name:" line in its README), then bump
+# server.json.
+name: MCP registry
+
+on:
+  push:
+    branches: [main]
+    paths: [server.json, .github/workflows/mcp-registry.yml]
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # GitHub OIDC token for "mcp-publisher login github-oidc"
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      PUBLISHER_VERSION: "1.8.6"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip if this version is already published
+        id: check
+        run: |
+          NAME=$(jq -r .name server.json)
+          VERSION=$(jq -r .version server.json)
+          echo "name=$NAME version=$VERSION"
+          if curl -sf "https://registry.modelcontextprotocol.io/v0/servers?search=$NAME&limit=100" \
+               | jq -e --arg v "$VERSION" --arg n "$NAME" '.servers[] | select(.server.name == $n and .server.version == $v)' > /dev/null; then
+            echo "already published"; echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install mcp-publisher (official release, checksum verified)
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          BASE="https://github.com/modelcontextprotocol/registry/releases/download/v${PUBLISHER_VERSION}"
+          curl -sSfL -o mcp-publisher_linux_amd64.tar.gz "$BASE/mcp-publisher_linux_amd64.tar.gz"
+          curl -sSfL -o checksums.txt "$BASE/registry_${PUBLISHER_VERSION}_checksums.txt"
+          grep " mcp-publisher_linux_amd64.tar.gz$" checksums.txt | sha256sum -c -
+          tar xzf mcp-publisher_linux_amd64.tar.gz mcp-publisher
+
+      - name: Validate, log in with GitHub OIDC and publish
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          ./mcp-publisher validate
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
