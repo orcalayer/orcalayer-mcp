@@ -432,6 +432,32 @@ def _form_vs_price(f):
     }
 
 
+_NOTE_STYLE = (
+    "style: how the wallet trades over the last window_days (30) days, recounted weekly; only for wallets with 30+ own fills "
+    "and $1,000+ volume in the window, otherwise null. styles is a subset of maker (60%+ of volume from its own limit orders "
+    "that others filled), inplay (30%+ of buys on sports and half or more of those after the game started) and fast (half or "
+    "more of the money it put in sold again within 2 hours); the shares behind them are given. It describes how a wallet "
+    "trades, not how well: each style held month to month in a pre-registered test, and no reliable evidence was found that "
+    "these wallets are harder to copy (orcalayer.com/methodology#style)."
+)
+
+
+def _style(st):
+    """Compact trading-style block from the overview payload; None when the wallet has no style row."""
+    if not isinstance(st, dict) or not st.get("available"):
+        return None
+    return {
+        "styles": st.get("styles") or [],
+        "maker_share": st.get("maker_share"),
+        "sports_buy_share": st.get("sports_buy_share"),
+        "in_play_share": st.get("in_play_share"),
+        "fast_share": st.get("fast_share"),
+        "fills": st.get("fills"),
+        "window_days": st.get("window_days"),
+        "as_of": st.get("as_of"),
+    }
+
+
 @mcp.tool(title="Wallet overview", annotations=_read_only("Wallet overview"))
 def wallet_overview(address: str | int) -> dict:
     """Summarize one wallet's trading profile and performance.
@@ -553,6 +579,7 @@ def wallet_overview(address: str | int) -> dict:
         "categories": data.get("categories"),
         "rankings": rankings,
         "form_vs_price": _form_vs_price(data.get("form_vs_price")),
+        "style": _style(data.get("style")),
         # True when heavy side-stats timed out: core stats above are still
         # valid, some derived fields may be missing.
         "degraded": data.get("degraded", False),
@@ -588,7 +615,23 @@ def wallet_overview(address: str | int) -> dict:
             "trade_dates": _NOTE_TRADE_DATES,
             "rankings": "rankings: position among `out_of` tracked wallets, 1 = best; null when the wallet is not ranked.",
             "form_vs_price": _NOTE_FORM_VS_PRICE,
+            "style": _NOTE_STYLE,
         },
+    }
+
+
+def _in_form(f):
+    """In-form wallets block from the market payload (top 10% by Form vs price, per side); None when absent."""
+    if not isinstance(f, dict):
+        return None
+    return {
+        "shown": bool(f.get("show")),
+        "reason_hidden": f.get("reason"),
+        "yes": f.get("yes"),
+        "no": f.get("no"),
+        "total": f.get("total"),
+        "lean": f.get("lean"),
+        "positions_synced_at": f.get("positions_synced_at"),
     }
 
 
@@ -868,6 +911,7 @@ def market_consensus(market: str | int) -> dict:
             ),
         },
         "last_24h": data.get("smart_money_24h"),
+        "in_form_wallets": _in_form(data.get("in_form")),
         "caveats": (
             "head_count counts wallets from " + _SMART_SET + ", whatever their "
             "position size, so popular markets count thousands and a $5 wallet "
@@ -875,7 +919,14 @@ def market_consensus(market: str | int) -> dict:
             "the money at stake and carries more information when the two "
             "disagree. On cheap longshots (YES < ~15c) head-count leans YES "
             "structurally. Divergence from price is positioning information, "
-            "not evidence that the market is mispriced."
+            "not evidence that the market is mispriced. in_form_wallets: wallets "
+            "from the top 10% by Form vs price holding each side (positions of "
+            "$10+, each wallet on its bigger side); shown is false on crypto, "
+            "within a day of the end or the game start, with fewer than 3 such "
+            "wallets or a YES price outside 5-95c. In a pre-registered test on "
+            "closed markets the side held by 2/3+ of three or more of them won "
+            "more often than its price implied (orcalayer.com/methodology"
+            "#in-form-wallets); it describes positions, not a forecast."
         ),
     }
 
