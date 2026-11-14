@@ -332,6 +332,7 @@ def leaderboard(
     category: str | None = None,
     filter: Literal["smart", "all"] = "smart",
     limit: int = 20,
+    under_radar: bool = False,
 ) -> dict:
     """Rank Polymarket traders from OrcaLayer's Smart Money set (or all wallets).
 
@@ -354,12 +355,22 @@ def leaderboard(
             (case-insensitive). None = all.
         filter: "smart" (OrcaLayer's Smart Money set, default) or "all".
         limit: How many wallets to return, 1–50 (larger values return 50).
+        under_radar: True = only "Under the radar" wallets: top 10% for form
+            against the price over the last 90 days but NOT in Smart Money
+            (and not bots). They are outside Smart Money by definition, so this
+            replaces `filter`.
     """
     limit = max(1, min(limit, 50))
     try:
-        data = _client().leaderboard(
-            sort=sort, category=_category(category), filter=filter, limit=limit
-        )
+        if under_radar:
+            # The orcalayer SDK (0.2.x) has no under_radar argument yet; the endpoint takes it as a plain query parameter.
+            data = _client()._get("whales/leaderboard", {
+                "sort": sort, "category": _category(category), "filter": "all", "limit": limit, "under_radar": 1,
+            })
+        else:
+            data = _client().leaderboard(
+                sort=sort, category=_category(category), filter=filter, limit=limit
+            )
     except OrcaLayerError as exc:
         raise _real_failure(exc)
 
@@ -383,12 +394,13 @@ def leaderboard(
             "open_positions": w.get("active_count"),
             "last_trade": _trade_date(w.get("last_trade_ts")),
             "skill_badge": w.get("skill_badge"),
+            "under_radar": w.get("under_radar"),
         })
     return {
         "wallets": rows,
         "total": data.get("total"),
         "sort": data.get("sort", sort),
-        "filter": filter,
+        "filter": "under_radar" if under_radar else filter,
         "notes": {
             "total": (
                 "How many wallets match the filter. filter='smart' means " + _SMART_SET + "."
@@ -403,6 +415,7 @@ def leaderboard(
             "indexed_volume_usd": _NOTE_VOLUME,
             "last_trade": _NOTE_TRADE_DATES,
             "skill_badge": "skill_badge: stricter weekly mark inside Smart Money (orcalayer.com/methodology#skill-badge).",
+            "under_radar": _NOTE_UNDER_RADAR,
         },
     }
 
@@ -413,7 +426,18 @@ _NOTE_FORM_VS_PRICE = (
     "favourite / long-shot bias (each position is compared with all traders at the same entry price) and pulled towards "
     "zero for small samples. percentile: rank among wallets with the label, 100 = best. by_entry_price: raw positions, "
     "share won and average entry price per price band. sports_in_play_share: share of sports positions bought after the "
-    "game started. Past form is not a guarantee."
+    "game started. under_radar: true when the wallet is in the top 10% for this form but is not in Smart Money (and is "
+    "not a bot), so Smart Money lists leave it out (orcalayer.com/methodology#under-the-radar). Past form is not a guarantee."
+)
+
+_NOTE_UNDER_RADAR = (
+    "under_radar: the wallet is in the top 10% for form against the price over the last 90 days but is not in Smart Money "
+    "(and is not a bot), so Smart Money lists leave it out. Most such wallets miss the Smart Money win-rate bar (55%, "
+    "counted per position; market_win_rate, one market = one result, can be higher): they buy at mid prices and win more "
+    "often than the price implied. Tested before release: marked as of 1 Oct "
+    "2026, they beat the price over the next six weeks (about +1.8 cents per position; a typical wallet by less) and few "
+    "moved into Smart Money, so it is not a 'rising' mark. Past trades, not a forecast "
+    "(orcalayer.com/methodology#under-the-radar)."
 )
 
 
@@ -428,6 +452,7 @@ def _form_vs_price(f):
         "window_days": f.get("window_days"),
         "by_entry_price": f.get("by_entry_price"),
         "sports_in_play_share": f.get("sports_in_play_share"),
+        "under_radar": f.get("under_radar"),
         "as_of": f.get("as_of"),
     }
 
