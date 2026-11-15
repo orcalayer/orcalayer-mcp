@@ -333,6 +333,7 @@ def leaderboard(
     filter: Literal["smart", "all"] = "smart",
     limit: int = 20,
     under_radar: bool = False,
+    liquidity_provider: bool = False,
 ) -> dict:
     """Rank Polymarket traders from OrcaLayer's Smart Money set (or all wallets).
 
@@ -359,14 +360,20 @@ def leaderboard(
             against the price over the last 90 days but NOT in Smart Money
             (and not bots). They are outside Smart Money by definition, so this
             replaces `filter`.
+        liquidity_provider: True = only Liquidity providers: wallets Polymarket
+            paid $100+ in liquidity rewards over the last 30 days, on 10+ days.
+            Combines with `filter` and `under_radar`.
     """
     limit = max(1, min(limit, 50))
     try:
-        if under_radar:
-            # The orcalayer SDK (0.2.x) has no under_radar argument yet; the endpoint takes it as a plain query parameter.
-            data = _client()._get("whales/leaderboard", {
-                "sort": sort, "category": _category(category), "filter": "all", "limit": limit, "under_radar": 1,
-            })
+        if under_radar or liquidity_provider:
+            # The orcalayer SDK (0.2.x) has no under_radar / lp arguments yet; the endpoint takes them as plain query parameters.
+            q = {"sort": sort, "category": _category(category), "filter": "all" if under_radar else filter, "limit": limit}
+            if under_radar:
+                q["under_radar"] = 1
+            if liquidity_provider:
+                q["lp"] = 1
+            data = _client()._get("whales/leaderboard", q)
         else:
             data = _client().leaderboard(
                 sort=sort, category=_category(category), filter=filter, limit=limit
@@ -395,12 +402,14 @@ def leaderboard(
             "last_trade": _trade_date(w.get("last_trade_ts")),
             "skill_badge": w.get("skill_badge"),
             "under_radar": w.get("under_radar"),
+            "liquidity_provider": w.get("liquidity_provider"),
+            "liquidity_rewards_30d": w.get("liquidity_rewards_30d"),
         })
     return {
         "wallets": rows,
         "total": data.get("total"),
         "sort": data.get("sort", sort),
-        "filter": "under_radar" if under_radar else filter,
+        "filter": "+".join(x for x in (("under_radar" if under_radar else filter), ("liquidity_provider" if liquidity_provider else "")) if x),
         "notes": {
             "total": (
                 "How many wallets match the filter. filter='smart' means " + _SMART_SET + "."
@@ -416,6 +425,7 @@ def leaderboard(
             "last_trade": _NOTE_TRADE_DATES,
             "skill_badge": "skill_badge: stricter weekly mark inside Smart Money (orcalayer.com/methodology#skill-badge).",
             "under_radar": _NOTE_UNDER_RADAR,
+            "liquidity_provider": _NOTE_LIQUIDITY.replace("liquidity_rewards: ", "liquidity_provider / liquidity_rewards_30d: ", 1),
         },
     }
 
@@ -439,6 +449,28 @@ _NOTE_UNDER_RADAR = (
     "moved into Smart Money, so it is not a 'rising' mark. Past trades, not a forecast "
     "(orcalayer.com/methodology#under-the-radar)."
 )
+
+
+_NOTE_LIQUIDITY = (
+    "liquidity_rewards: Polymarket liquidity rewards paid to the wallet over the last window_days (30) accrual days, read on-chain "
+    "and recounted daily (rewards_usd, reward_days). liquidity_provider = true when it was paid $100+ on 10+ different days. "
+    "Polymarket pays these for keeping limit orders on the book; they come on top of trading profit, and copying the wallet's "
+    "trades does not earn them. The label held month to month in a pre-registered test and is not the Maker style under "
+    "another name. It describes how a wallet earns, not how well it trades (orcalayer.com/methodology#liquidity-provider)."
+)
+
+
+def _liquidity(lr):
+    """Compact liquidity-rewards block; None when the data is unavailable."""
+    if not isinstance(lr, dict) or not lr.get("available"):
+        return None
+    return {
+        "liquidity_provider": lr.get("liquidity_provider"),
+        "rewards_usd": lr.get("rewards_usd"),
+        "reward_days": lr.get("reward_days"),
+        "window_days": lr.get("window_days"),
+        "window_end": lr.get("window_end"),
+    }
 
 
 def _form_vs_price(f):
@@ -605,6 +637,7 @@ def wallet_overview(address: str | int) -> dict:
         "rankings": rankings,
         "form_vs_price": _form_vs_price(data.get("form_vs_price")),
         "style": _style(data.get("style")),
+        "liquidity_rewards": _liquidity(data.get("liquidity_rewards")),
         # True when heavy side-stats timed out: core stats above are still
         # valid, some derived fields may be missing.
         "degraded": data.get("degraded", False),
@@ -641,6 +674,7 @@ def wallet_overview(address: str | int) -> dict:
             "rankings": "rankings: position among `out_of` tracked wallets, 1 = best; null when the wallet is not ranked.",
             "form_vs_price": _NOTE_FORM_VS_PRICE,
             "style": _NOTE_STYLE,
+            "liquidity_rewards": _NOTE_LIQUIDITY,
         },
     }
 
