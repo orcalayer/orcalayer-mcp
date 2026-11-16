@@ -32,9 +32,10 @@ import threading
 import urllib.parse
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import httpx
+from pydantic import Field
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
@@ -265,6 +266,9 @@ _CATEGORY_CODES = {
     "ai": "TECH",
 }
 _CATEGORY_NAMES = '"Crypto", "Politics", "Sports", "Geopolitics", "Economics", "Tech/AI"'
+# Argument description in the tools' input schema (mcptry 16.11.2026: clients read properties.<arg>.description)
+_CATEGORY_ARG = ('Restrict to one market category: "Crypto", "Politics", "Sports", "Geopolitics", "Economics" or "Tech/AI" '
+                 '(case-insensitive; "tech" and "ai" also work). Omit for all categories.')
 
 
 def _category(value: str | None) -> str | None:
@@ -328,12 +332,22 @@ def _market_ref(market: str | int) -> str:
 
 @mcp.tool(title="Smart-money leaderboard", annotations=_read_only("Smart-money leaderboard"))
 def leaderboard(
-    sort: Literal["pnl", "win_rate", "volume", "trades"] = "pnl",
-    category: str | None = None,
-    filter: Literal["smart", "all"] = "smart",
-    limit: int = 20,
-    under_radar: bool = False,
-    liquidity_provider: bool = False,
+    sort: Annotated[Literal["pnl", "win_rate", "volume", "trades"], Field(description=(
+        'Ranking key: "pnl" (lifetime profit, default), "win_rate", "volume" or "trades". "win_rate" orders by the '
+        "leaderboard's stored win rate, which is computed differently from the market_win_rate shown, so rows can look "
+        "out of order by that column."))] = "pnl",
+    category: Annotated[str | None, Field(description=(
+        'Restrict to wallets mainly trading one category: "Crypto", "Politics", "Sports", "Geopolitics", "Economics" '
+        'or "Tech/AI" (case-insensitive). Omit for all categories.'))] = None,
+    filter: Annotated[Literal["smart", "all"], Field(description=(
+        '"smart" = OrcaLayer\'s Smart Money set (default); "all" = every ranked wallet.'))] = "smart",
+    limit: Annotated[int, Field(description="How many wallets to return, 1 to 50 (larger values return 50).")] = 20,
+    under_radar: Annotated[bool, Field(description=(
+        'True = only "Under the radar" wallets: top 10% for form against the price over the last 90 days but not in '
+        "Smart Money (and not bots). They are outside Smart Money by definition, so this replaces `filter`."))] = False,
+    liquidity_provider: Annotated[bool, Field(description=(
+        "True = only Liquidity providers: wallets Polymarket paid $100+ in liquidity rewards over the last 30 days, "
+        "on 10+ days. Combines with `filter` and `under_radar`."))] = False,
 ) -> dict:
     """Rank Polymarket traders from OrcaLayer's Smart Money set (or all wallets).
 
@@ -345,24 +359,6 @@ def leaderboard(
     main category, average entry price, open positions and the last trade date.
     `total` is how many wallets match the filter. A `notes` block defines each
     field.
-
-    Args:
-        sort: Ranking key: "pnl" (default), "win_rate", "volume" or "trades".
-            "win_rate" orders by the leaderboard's stored win rate, which is
-            computed differently from the market_win_rate shown, so rows can
-            look out of order by that column.
-        category: Restrict to wallets mainly trading one category: "Crypto",
-            "Politics", "Sports", "Geopolitics", "Economics" or "Tech/AI"
-            (case-insensitive). None = all.
-        filter: "smart" (OrcaLayer's Smart Money set, default) or "all".
-        limit: How many wallets to return, 1–50 (larger values return 50).
-        under_radar: True = only "Under the radar" wallets: top 10% for form
-            against the price over the last 90 days but NOT in Smart Money
-            (and not bots). They are outside Smart Money by definition, so this
-            replaces `filter`.
-        liquidity_provider: True = only Liquidity providers: wallets Polymarket
-            paid $100+ in liquidity rewards over the last 30 days, on 10+ days.
-            Combines with `filter` and `under_radar`.
     """
     limit = max(1, min(limit, 50))
     try:
@@ -516,7 +512,9 @@ def _style(st):
 
 
 @mcp.tool(title="Wallet overview", annotations=_read_only("Wallet overview"))
-def wallet_overview(address: str | int) -> dict:
+def wallet_overview(
+    address: Annotated[str | int, Field(description="0x wallet address (proxy or signer) or OrcaLayer nickname.")],
+) -> dict:
     """Summarize one wallet's trading profile and performance.
 
     Wallet profit tracking for any Polymarket address: lifetime P&L
@@ -531,9 +529,6 @@ def wallet_overview(address: str | int) -> dict:
     is a ``{"status": "computing", "retry_after_seconds": N}`` notice instead of
     data; N is the number of seconds after which the stats are expected to be
     ready.
-
-    Args:
-        address: 0x wallet address or OrcaLayer nickname.
     """
     ref = _wallet_ref(address)
     try:
@@ -695,17 +690,17 @@ def _in_form(f):
 
 
 @mcp.tool(title="Wallet open positions", annotations=_read_only("Wallet open positions"))
-def wallet_positions(address: str | int, limit: int = 15) -> dict:
+def wallet_positions(
+    address: Annotated[str | int, Field(description="0x wallet address (proxy or signer) or OrcaLayer nickname.")],
+    limit: Annotated[int, Field(description=(
+        "How many open positions to return, 1 to 50. The wallet may hold more; the response reports how many were "
+        "left out."))] = 15,
+) -> dict:
     """List a wallet's largest open positions by current value.
 
     Accepts a 0x wallet address or an OrcaLayer nickname. Returns the
     positions with the largest current value first, in a compact form, plus a
     count of how many more are not shown.
-
-    Args:
-        address: 0x wallet address or OrcaLayer nickname.
-        limit: How many positions to return (1–50). The wallet may hold more;
-            the response reports how many were omitted.
     """
     capped = max(1, min(limit, 50))
     ref = _wallet_ref(address)
@@ -750,11 +745,14 @@ def wallet_positions(address: str | int, limit: int = 15) -> dict:
 
 @mcp.tool(title="Market search", annotations=_read_only("Market search"))
 def markets(
-    q: str | int = "",
-    category: str | None = None,
-    min_volume: float | None = None,
-    min_whales: int | None = None,
-    limit: int = 20,
+    q: Annotated[str | int, Field(description=(
+        'Free-text query; also accepts a Polymarket URL or slug. "" browses. Open markets only.'))] = "",
+    category: Annotated[str | None, Field(description=_CATEGORY_ARG)] = None,
+    min_volume: Annotated[float | None, Field(description="Minimum market volume in USD. Omit for no minimum.")] = None,
+    min_whales: Annotated[int | None, Field(description=(
+        "Minimum number of Smart Money wallets holding a position in the market (either side). Omit for no "
+        "minimum."))] = None,
+    limit: Annotated[int, Field(description="How many markets to return, 1 to 50 (larger values return 50).")] = 20,
 ) -> dict:
     """Search Polymarket markets, optionally where Smart Money wallets cluster.
 
@@ -764,16 +762,6 @@ def markets(
     volume, end date and days left. The counts are wallets, whatever their
     position size; popular markets have thousands. The dollar split on one
     market is in the market_consensus tool.
-
-    Args:
-        q: Free-text query; also accepts a Polymarket URL or slug. "" browses.
-            Open markets only.
-        category: One of "Crypto", "Politics", "Sports", "Geopolitics",
-            "Economics", "Tech/AI" (case-insensitive). None = all.
-        min_volume: Minimum market volume in USD.
-        min_whales: Minimum number of Smart Money wallets holding a position
-            in the market (either side).
-        limit: How many markets to return, 1–50 (larger values return 50).
     """
     limit = max(1, min(limit, 50))
     category_code = _category(category)
@@ -857,7 +845,10 @@ def _event_markets(event_slug: str, rows: list[dict]) -> dict:
 
 
 @mcp.tool(title="Smart-money consensus on a market", annotations=_read_only("Smart-money consensus on a market"))
-def market_consensus(market: str | int) -> dict:
+def market_consensus(
+    market: Annotated[str | int, Field(description=(
+        "Market id, Polymarket market or event slug, polymarket.com URL, or 0x condition id."))],
+) -> dict:
     """Smart-money consensus on one Polymarket market versus its current price.
 
     Returns how Smart Money wallets are positioned on one market: how many
@@ -877,10 +868,6 @@ def market_consensus(market: str | int) -> dict:
     An event slug or event URL (a Polymarket event groups several markets)
     returns the event's markets with their ids and Smart Money wallet counts
     instead, since the consensus is per market.
-
-    Args:
-        market: Market id, Polymarket market or event slug, polymarket.com
-            URL, or 0x condition id.
     """
     ref = _market_ref(market)
     if not ref:
@@ -994,10 +981,11 @@ def market_consensus(market: str | int) -> dict:
 
 @mcp.tool(title="Whale trade alerts (Premium)", annotations=_read_only("Whale trade alerts (Premium)"))
 def whale_alerts(
-    minutes: int = 60,
-    min_usd: float = 1000,
-    category: str | None = None,
-    limit: int = 25,
+    minutes: Annotated[int, Field(description=(
+        "Look-back window in minutes, 1 to 1440 (24 hours); values outside the range are clamped to it."))] = 60,
+    min_usd: Annotated[float, Field(description="Minimum trade size in USD.")] = 1000,
+    category: Annotated[str | None, Field(description=_CATEGORY_ARG)] = None,
+    limit: Annotated[int, Field(description="How many alerts to return, 1 to 50 (larger values return 50).")] = 25,
 ) -> Any:
     """Recent trades by Smart Money wallets: real-time alerts on profitable
     wallets (Premium).
@@ -1013,15 +1001,6 @@ def whale_alerts(
     ORCALAYER_API_KEY environment variable. Without a key the result is a
     short notice on how to get one (no API call is made and it is not an
     error).
-
-    Args:
-        minutes: Lookback window in minutes, 1–1440 (24h); values outside
-            the range are clamped to it.
-        min_usd: Minimum trade size in USD.
-        category: Restrict to one market category: "Crypto", "Politics",
-            "Sports", "Geopolitics", "Economics" or "Tech/AI"
-            (case-insensitive). None = all.
-        limit: How many alerts to return, 1–50 (larger values return 50).
     """
     # Pre-check the key so the "needs Premium" path is an actionable message,
     # never a failure and never an API round-trip.
@@ -1129,11 +1108,17 @@ _DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 @mcp.tool(title="Realized PnL leaderboard for 7 / 30 days (Premium)",
           annotations=_read_only("Realized PnL leaderboard for 7 / 30 days (Premium)"))
 def pnl_leaderboard(
-    window: int = 7,
-    order: str = "desc",
-    as_of: str | None = None,
-    min_resolved: int = 0,
-    limit: int = 20,
+    window: Annotated[int, Field(description="7 or 30: Polymarket days in the window, ending on `as_of`.",
+                                 json_schema_extra={"enum": [7, 30]})] = 7,
+    order: Annotated[str, Field(description='"desc" = biggest realized profit first (default), "asc" = biggest loss first.',
+                                json_schema_extra={"enum": ["desc", "asc"]})] = "desc",
+    as_of: Annotated[str | None, Field(description=(
+        "YYYY-MM-DD, the last day of the window (7-day windows from 2026-06-07, 30-day from 2026-06-30). Omit for the "
+        "latest ranked day."))] = None,
+    min_resolved: Annotated[int, Field(description=(
+        "0, 1, 5 or 20: only wallets that held a position in at least that many markets resolved inside the window."),
+        json_schema_extra={"enum": [0, 1, 5, 20]})] = 0,
+    limit: Annotated[int, Field(description="How many wallets, 1 to 100 (larger values return 100).")] = 20,
 ) -> Any:
     """Polymarket wallets ranked by realized PnL inside a 7- or 30-day window
     (Premium).
@@ -1148,15 +1133,6 @@ def pnl_leaderboard(
     Needs an OrcaLayer Premium API key (hosted server: the
     ``Authorization: Bearer <key>`` header; stdio: ORCALAYER_API_KEY).
     Without a key the result is a short notice, not an error.
-
-    Args:
-        window: 7 or 30 (Polymarket days ending on ``as_of``).
-        order: "desc" = biggest realized profit first, "asc" = biggest loss.
-        as_of: YYYY-MM-DD, last day of the window (7-day windows from
-            2026-06-07, 30-day from 2026-06-30). None = latest ranked day.
-        min_resolved: 0, 1, 5 or 20: only wallets that held a position in at
-            least that many markets resolved inside the window.
-        limit: How many wallets, 1–100 (larger values return 100).
     """
     key = _request_api_key()
     if not key:
@@ -1200,11 +1176,12 @@ _RESOLUTION_TYPES = ("proposed", "disputed", "resolved", "reopened")
 
 @mcp.tool(title="Market resolution events (Premium)", annotations=_read_only("Market resolution events (Premium)"))
 def resolution_events(
-    minutes: int = 60,
-    types: list[str] | None = None,
-    category: str | None = None,
-    min_volume: float = 0,
-    limit: int = 50,
+    minutes: Annotated[int, Field(description="Look-back window in minutes, 1 to 20160 (14 days).")] = 60,
+    types: Annotated[list[str] | None, Field(description=(
+        'Any of "proposed", "disputed", "resolved", "reopened". Omit for all four.'))] = None,
+    category: Annotated[str | None, Field(description=_CATEGORY_ARG)] = None,
+    min_volume: Annotated[float, Field(description="Only markets with at least this traded volume, in USD.")] = 0,
+    limit: Annotated[int, Field(description="How many events, 1 to 200 (larger values return 200).")] = 50,
 ) -> Any:
     """Markets that were just proposed, disputed, resolved or reopened on
     Polymarket (Premium).
@@ -1218,16 +1195,6 @@ def resolution_events(
     Needs an OrcaLayer Premium API key (hosted server: the
     ``Authorization: Bearer <key>`` header; stdio: ORCALAYER_API_KEY).
     Without a key the result is a short notice, not an error.
-
-    Args:
-        minutes: Look-back window in minutes, 1–20160 (14 days).
-        types: Any of "proposed", "disputed", "resolved", "reopened";
-            None = all.
-        category: One market category: "Crypto", "Politics", "Sports",
-            "Geopolitics", "Economics" or "Tech/AI" (case-insensitive).
-            None = all.
-        min_volume: Only markets with at least this traded volume, USD.
-        limit: How many events, 1–200 (larger values return 200).
     """
     key = _request_api_key()
     if not key:
