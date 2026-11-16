@@ -5,6 +5,8 @@
 # when server.json (or this file) changes on main and skips quietly if that version is already in the registry.
 # Release order: publish the PyPI package first (the registry checks the "mcp-name:" line in its README), then bump
 # server.json.
+# A tag does not run this job. If server.json reached main before the package was on PyPI (16.11.2026, 0.5.17: the run
+# failed), re-run it with workflow_dispatch or with a commit that touches this file once PyPI has the version.
 name: MCP registry
 
 on:
