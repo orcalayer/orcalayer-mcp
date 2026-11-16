@@ -255,20 +255,25 @@ def _real_failure(exc: OrcaLayerError) -> ToolError:
 # leaderboard and the alerts as "TECH/AI", which they do not know (they use
 # "TECH"); "0x123" and empty addresses returned empty profiles or a bare 404.
 
+# November 2026: market categories come from Polymarket's own tags; Esports, Culture and Weather were added and Sports
+# no longer includes esports.
 _CATEGORY_CODES = {
     "crypto": "CRYPTO",
     "politics": "POLITICS",
     "sports": "SPORTS",
+    "esports": "ESPORTS",
     "geopolitics": "GEOPOLITICS",
     "economics": "ECONOMICS",
     "tech/ai": "TECH",
     "tech": "TECH",
     "ai": "TECH",
+    "culture": "CULTURE",
+    "weather": "WEATHER",
 }
-_CATEGORY_NAMES = '"Crypto", "Politics", "Sports", "Geopolitics", "Economics", "Tech/AI"'
+_CATEGORY_NAMES = '"Crypto", "Politics", "Sports", "Esports", "Geopolitics", "Economics", "Tech/AI", "Culture", "Weather"'
 # Argument description in the tools' input schema (mcptry 16.11.2026: clients read properties.<arg>.description)
-_CATEGORY_ARG = ('Restrict to one market category: "Crypto", "Politics", "Sports", "Geopolitics", "Economics" or "Tech/AI" '
-                 '(case-insensitive; "tech" and "ai" also work). Omit for all categories.')
+_CATEGORY_ARG = ('Restrict to one market category: "Crypto", "Politics", "Sports", "Esports", "Geopolitics", "Economics", '
+                 '"Tech/AI", "Culture" or "Weather" (case-insensitive; "tech" and "ai" also work). Omit for all categories.')
 
 
 def _category(value: str | None) -> str | None:
@@ -337,8 +342,8 @@ def leaderboard(
         "leaderboard's stored win rate, which is computed differently from the market_win_rate shown, so rows can look "
         "out of order by that column."))] = "pnl",
     category: Annotated[str | None, Field(description=(
-        'Restrict to wallets mainly trading one category: "Crypto", "Politics", "Sports", "Geopolitics", "Economics" '
-        'or "Tech/AI" (case-insensitive). Omit for all categories.'))] = None,
+        'Restrict to wallets mainly trading one category: "Crypto", "Politics", "Sports", "Esports", "Geopolitics", '
+        '"Economics", "Tech/AI", "Culture" or "Weather" (case-insensitive). Omit for all categories.'))] = None,
     filter: Annotated[Literal["smart", "all"], Field(description=(
         '"smart" = OrcaLayer\'s Smart Money set (default); "all" = every ranked wallet.'))] = "smart",
     limit: Annotated[int, Field(description="How many wallets to return, 1 to 50 (larger values return 50).")] = 20,
