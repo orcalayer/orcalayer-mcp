@@ -12,7 +12,7 @@
       ]
     }
   ],
-  "version": "0.5.17",
+  "version": "0.5.18",
   "websiteUrl": "https://orcalayer.com",
   "repository": {
     "url": "https://github.com/orcalayer/orcalayer-mcp",
@@ -28,7 +28,7 @@
     {
       "registryType": "pypi",
       "identifier": "orcalayer-mcp",
-      "version": "0.5.17",
+      "version": "0.5.18",
       "transport": {
         "type": "stdio"
       },
