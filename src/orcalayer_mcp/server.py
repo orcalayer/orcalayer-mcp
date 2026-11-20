@@ -353,6 +353,11 @@ def leaderboard(
     liquidity_provider: Annotated[bool, Field(description=(
         "True = only Liquidity providers: wallets Polymarket paid $100+ in liquidity rewards over the last 30 days, "
         "on 10+ days. Combines with `filter` and `under_radar`."))] = False,
+    habit: Annotated[Literal["favorites", "holds", "exits"] | None, Field(description=(
+        'Only wallets with one trading habit over the last 90 days (recounted daily): "favorites" = Buys favorites (half or '
+        'more of the money into outcomes bought at 90 cents or more), "holds" = Holds to resolution (95%+ of what it bought '
+        'held until the market resolved), "exits" = Exits early (30% or less held). Combines with the other filters. '
+        "Omit for no habit filter."))] = None,
 ) -> dict:
     """Rank Polymarket traders from OrcaLayer's Smart Money set (or all wallets).
 
@@ -367,13 +372,15 @@ def leaderboard(
     """
     limit = max(1, min(limit, 50))
     try:
-        if under_radar or liquidity_provider:
-            # The orcalayer SDK (0.2.x) has no under_radar / lp arguments yet; the endpoint takes them as plain query parameters.
+        if under_radar or liquidity_provider or habit:
+            # The orcalayer SDK (0.2.x) has no under_radar / lp / habit arguments yet; the endpoint takes them as plain query parameters.
             q = {"sort": sort, "category": _category(category), "filter": "all" if under_radar else filter, "limit": limit}
             if under_radar:
                 q["under_radar"] = 1
             if liquidity_provider:
                 q["lp"] = 1
+            if habit:
+                q["habit"] = habit
             data = _client()._get("whales/leaderboard", q)
         else:
             data = _client().leaderboard(
@@ -405,12 +412,14 @@ def leaderboard(
             "under_radar": w.get("under_radar"),
             "liquidity_provider": w.get("liquidity_provider"),
             "liquidity_rewards_30d": w.get("liquidity_rewards_30d"),
+            "habits": w.get("habits") or [],
         })
     return {
         "wallets": rows,
         "total": data.get("total"),
         "sort": data.get("sort", sort),
-        "filter": "+".join(x for x in (("under_radar" if under_radar else filter), ("liquidity_provider" if liquidity_provider else "")) if x),
+        "filter": "+".join(x for x in (("under_radar" if under_radar else filter), ("liquidity_provider" if liquidity_provider else ""),
+                                       (f"habit:{habit}" if habit else "")) if x),
         "notes": {
             "total": (
                 "How many wallets match the filter. filter='smart' means " + _SMART_SET + "."
@@ -427,6 +436,7 @@ def leaderboard(
             "skill_badge": "skill_badge: stricter weekly mark inside Smart Money (orcalayer.com/methodology#skill-badge).",
             "under_radar": _NOTE_UNDER_RADAR,
             "liquidity_provider": _NOTE_LIQUIDITY.replace("liquidity_rewards: ", "liquidity_provider / liquidity_rewards_30d: ", 1),
+            "habits": "habits: the wallet's trading-habit labels (favorites, holds, exits); [] = none. " + _NOTE_HABITS,
         },
     }
 
@@ -471,6 +481,37 @@ def _liquidity(lr):
         "reward_days": lr.get("reward_days"),
         "window_days": lr.get("window_days"),
         "window_end": lr.get("window_end"),
+    }
+
+
+_NOTE_HABITS = (
+    "Trading habits over the last window_days (90) days, recounted daily, from the wallet's own trades. favorites (Buys "
+    "favorites): half or more of the money it put into positions (fav_share) went into outcomes bought at an average of 90 "
+    "cents or more, with 20+ positions and $1,000+ of buys; farmers excluded. It wins often because it buys what is nearly "
+    "decided; a win at 90 cents or more pays 10 cents or less per dollar, so its win rate says little about skill. holds "
+    "(Holds to resolution): it kept 95% or more of what it bought until the market resolved (hold_share; a sale at an average "
+    "of 95 cents or more counts as holding); to repeat its result, repeating its entries is enough. exits (Exits early): "
+    "hold_share of 30% or less; its result depends on its exits, so copying only the entries gives a different result. Holds "
+    "and exits need 20+ positions resolved in the window and $1,000+ of buys; market makers excluded. Each habit held between "
+    "two 11-week windows in a pre-registered test. It describes how a wallet trades, not how well "
+    "(orcalayer.com/methodology#habits)."
+)
+
+
+def _habits(h):
+    """Compact trading-habits block; None when the data is unavailable. Numbers are null under 10 positions in the window."""
+    if not isinstance(h, dict) or not h.get("available"):
+        return None
+    return {
+        "habits": h.get("habits") or [],
+        "fav_share": h.get("fav_share"),
+        "fav_positions": h.get("fav_positions"),
+        "fav_buy_usd": h.get("fav_buy_usd"),
+        "hold_share": h.get("hold_share"),
+        "hold_positions": h.get("hold_positions"),
+        "hold_buy_usd": h.get("hold_buy_usd"),
+        "window_days": h.get("window_days"),
+        "computed_at": h.get("computed_at"),
     }
 
 
@@ -638,6 +679,7 @@ def wallet_overview(
         "form_vs_price": _form_vs_price(data.get("form_vs_price")),
         "style": _style(data.get("style")),
         "liquidity_rewards": _liquidity(data.get("liquidity_rewards")),
+        "habits": _habits(data.get("habits")),
         # True when heavy side-stats timed out: core stats above are still
         # valid, some derived fields may be missing.
         "degraded": data.get("degraded", False),
@@ -675,6 +717,7 @@ def wallet_overview(
             "form_vs_price": _NOTE_FORM_VS_PRICE,
             "style": _NOTE_STYLE,
             "liquidity_rewards": _NOTE_LIQUIDITY,
+            "habits": "habits: " + _NOTE_HABITS + " null when unavailable.",
         },
     }
 
