@@ -722,6 +722,20 @@ def wallet_overview(
     }
 
 
+def _took_side(net: dict | None) -> dict | None:
+    """head_count.took_side from the API's whales.net: wallets that took a side, the YES share of them and of their dollars."""
+    if not isinstance(net, dict) or net.get("yes") is None:
+        return None
+    y, n = int(net.get("yes") or 0), int(net.get("no") or 0)
+    return {
+        "yes": y,
+        "no": n,
+        "no_side": net.get("no_side"),
+        "yes_pct": round(100.0 * y / (y + n), 1) if (y + n) > 0 else None,
+        "yes_usd_pct": net.get("yes_pct_usd"),
+    }
+
+
 def _in_form(f):
     """In-form wallets block from the market payload (top 10% by Form vs price, per side); None when absent."""
     if not isinstance(f, dict):
@@ -808,8 +822,8 @@ def markets(
     OrcaLayer's Smart Money set hold each side right now. Returns each
     market's id, question, YES price, smart_wallets_yes / smart_wallets_no,
     volume, end date and days left. The counts are wallets, whatever their
-    position size; popular markets have thousands. The dollar split on one
-    market is in the market_consensus tool.
+    position size; the busiest markets count hundreds, a handful over a
+    thousand. The dollar split on one market is in the market_consensus tool.
     """
     limit = max(1, min(limit, 50))
     category_code = _category(category)
@@ -905,7 +919,10 @@ def market_consensus(
 
     Two consensus reads are returned side by side and can disagree:
     ``head_count`` (one Smart Money wallet = one vote; wallets from
-    OrcaLayer's Smart Money set, so popular markets count thousands) and
+    OrcaLayer's Smart Money set; the busiest markets count hundreds, a handful
+    over a thousand; a wallet holding both sides is in both counts, while
+    ``head_count.took_side`` counts each wallet once, on the side holding more
+    of its dollars, as the OrcaLayer market page does) and
     ``capital_weighted`` (dollars invested per side). In head_count a $5
     wallet weighs the same as a $500K one, so it is the weaker of the two
     reads; the capital split reflects the money at stake. On cheap longshots
@@ -983,6 +1000,12 @@ def market_consensus(
             "no_whales": whales.get("no"),
             "total": whales.get("total"),
             "yes_pct": head_yes_pct,
+            # distinct Smart Money wallets holding the market; both_sides of them are in both counts above
+            "wallets": whales.get("wallets"),
+            "both_sides": whales.get("both_sides"),
+            # each wallet once, on the side holding more of its dollars (the headline read of the OrcaLayer market page);
+            # no_side = wallets the market page sets apart, holding both sides
+            "took_side": _took_side(whales.get("net")),
         },
         "capital_weighted": {
             "smart_yes_invested_usd": round(smart_yes, 2),
@@ -1008,7 +1031,9 @@ def market_consensus(
         "in_form_wallets": _in_form(data.get("in_form")),
         "caveats": (
             "head_count counts wallets from " + _SMART_SET + ", whatever their "
-            "position size, so popular markets count thousands and a $5 wallet "
+            "position size (the busiest markets count hundreds, a handful over a "
+            "thousand; a wallet holding both sides is in both counts, took_side "
+            "counts it once), and a $5 wallet "
             "counts the same as a $500K one; the capital-weighted split reflects "
             "the money at stake and carries more information when the two "
             "disagree. On cheap longshots (YES < ~15c) head-count leans YES "
