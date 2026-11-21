@@ -731,6 +731,7 @@ def _took_side(net: dict | None) -> dict | None:
         "yes": y,
         "no": n,
         "no_side": net.get("no_side"),
+        "dust": net.get("dust"),   # 0.5.21: wallets with under $10 on their side, not counted in yes / no
         "yes_pct": round(100.0 * y / (y + n), 1) if (y + n) > 0 else None,
         "yes_usd_pct": net.get("yes_pct_usd"),
     }
@@ -922,7 +923,8 @@ def market_consensus(
     OrcaLayer's Smart Money set; the busiest markets count hundreds, a handful
     over a thousand; a wallet holding both sides is in both counts, while
     ``head_count.took_side`` counts each wallet once, on the side holding more
-    of its dollars, as the OrcaLayer market page does) and
+    of its dollars and only with $10 or more on that side, as the OrcaLayer
+    market page does; ``dust`` is how many were left out under $10) and
     ``capital_weighted`` (dollars invested per side). In head_count a $5
     wallet weighs the same as a $500K one, so it is the weaker of the two
     reads; the capital split reflects the money at stake. On cheap longshots
@@ -1033,7 +1035,7 @@ def market_consensus(
             "head_count counts wallets from " + _SMART_SET + ", whatever their "
             "position size (the busiest markets count hundreds, a handful over a "
             "thousand; a wallet holding both sides is in both counts, took_side "
-            "counts it once), and a $5 wallet "
+            "counts it once and only with $10+ on its side), and a $5 wallet "
             "counts the same as a $500K one; the capital-weighted split reflects "
             "the money at stake and carries more information when the two "
             "disagree. On cheap longshots (YES < ~15c) head-count leans YES "
