@@ -737,6 +737,32 @@ def _took_side(net: dict | None) -> dict | None:
     }
 
 
+def _market_makers(mm):
+    """0.5.22: market makers among the market's holders, per side, for all holders and for Smart Money ones (the API's
+    market_makers, OrcaLayer backend 21.11.2026); None when the market has no Polymarket position snapshot."""
+    if not isinstance(mm, dict):
+        return None
+
+    def _side(b):
+        b = b if isinstance(b, dict) else {}
+        return {
+            "yes_wallets": int(b.get("yes_wallets") or 0),
+            "no_wallets": int(b.get("no_wallets") or 0),
+            "yes_invested_usd": round(float(b.get("yes_invested") or 0), 2),
+            "no_invested_usd": round(float(b.get("no_invested") or 0), 2),
+        }
+
+    rule = mm.get("rule") if isinstance(mm.get("rule"), dict) else {}
+    return {
+        "rule": {
+            "maker_share_min": rule.get("maker_share_min"),
+            "fills_30d_min": rule.get("fills_30d_min"),
+        },
+        "all_holders": _side(mm.get("all")),
+        "smart_money": _side(mm.get("smart")),
+    }
+
+
 def _in_form(f):
     """In-form wallets block from the market payload (top 10% by Form vs price, per side); None when absent."""
     if not isinstance(f, dict):
@@ -932,6 +958,14 @@ def market_consensus(
     fields measure positioning against the price; they are not evidence that
     the price is wrong.
 
+    ``market_makers`` counts the market makers among the holders on each
+    side, for all holders and for the Smart Money ones (a market maker: 90%+
+    of its last 30 days of volume came from its own resting orders that others
+    filled, over 5,000+ fills, the Market maker label of the OrcaLayer market
+    page). A market maker's position is inventory it trades around, not a view
+    on the outcome. These wallets are still counted in head_count and
+    capital_weighted; null when the market has no position snapshot.
+
     An event slug or event URL (a Polymarket event groups several markets)
     returns the event's markets with their ids and Smart Money wallet counts
     instead, since the consensus is per market.
@@ -1031,6 +1065,7 @@ def market_consensus(
         },
         "last_24h": data.get("smart_money_24h"),
         "in_form_wallets": _in_form(data.get("in_form")),
+        "market_makers": _market_makers(data.get("market_makers")),
         "caveats": (
             "head_count counts wallets from " + _SMART_SET + ", whatever their "
             "position size (the busiest markets count hundreds, a handful over a "
@@ -1047,7 +1082,10 @@ def market_consensus(
             "wallets or a YES price outside 5-95c. In a pre-registered test on "
             "closed markets the side held by 2/3+ of three or more of them won "
             "more often than its price implied (orcalayer.com/methodology"
-            "#in-form-wallets); it describes positions, not a forecast."
+            "#in-form-wallets); it describes positions, not a forecast. "
+            "market_makers: a market maker's position is inventory it trades "
+            "around, not a view on the outcome; those wallets are still in "
+            "head_count and capital_weighted."
         ),
     }
 
