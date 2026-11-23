@@ -5,6 +5,7 @@
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io)
 [![MCP Badge](https://lobehub.com/badge/mcp/orcalayer-orcalayer-mcp)](https://lobehub.com/mcp/orcalayer-orcalayer-mcp)
 [![Glama MCP](https://glama.ai/mcp/servers/orcalayer/orcalayer-mcp/badges/score.svg)](https://glama.ai/mcp/servers/orcalayer/orcalayer-mcp)
+[![OrcaLayer MCP on mcprush](https://mcprush.com/badge/orcalayer-mcp/score.svg)](https://mcprush.com/to/orcalayer-mcp?ref=badge)
 [![orcalayer-mcp MCP server](https://glama.ai/mcp/servers/orcalayer/orcalayer-mcp/badges/card.svg)](https://glama.ai/mcp/servers/orcalayer/orcalayer-mcp)
 
 MCP server for the [OrcaLayer](https://orcalayer.com) Polymarket smart money and whale analytics API,
