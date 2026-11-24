@@ -1560,9 +1560,17 @@ read endpoints (wallet profiles, market search, leaderboard) need no key.
 Every response carries X-RateLimit-* headers.
 
 ## Real-time feed
-Server-Sent Events (SSE) at /api/public/v1/live/trades (Premium) streams each
-smart-money trade as it lands — a long-lived EventSource connection, one JSON
-event per trade. (It is SSE, not WebSocket.)
+Server-Sent Events (SSE) at /api/public/v1/live/trades (Premium) streams every
+Polymarket fill as it happens — a long-lived EventSource connection, one JSON
+event per filled order (the taker's and each maker's), each naming one wallet.
+(It is SSE, not WebSocket.)
+
+Since 2026-11-24 fills on Polymarket's Protocol V2 markets (new exchange, rolling
+out since 2026-11-23), which the public activity feed behind the relay does not
+carry, come from our own indexer: same event shape plus "source": "indexer",
+"log_index" and "indexer_published_at_ms", ~20-60 s after the block (median
+~22 s), so sort by "timestamp" if order matters; name / pseudonym / bio /
+profileImage / fee are null in them. Events without "source" are unchanged.
 
 Since 2026-07-22 every event also carries `settlement_type`
 ("MINT" | "MERGE" | "COMPLEMENTARY" | null) — the settlement mechanics of the

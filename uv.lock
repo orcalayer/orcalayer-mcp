@@ -373,7 +373,7 @@ wheels = [
 
 [[package]]
 name = "orcalayer-mcp"
-version = "0.5.22"
+version = "0.5.23"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },

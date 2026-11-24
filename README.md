@@ -55,6 +55,11 @@ leaderboard (`profit_factor_capped`) and uncapped net in the overview;
 `indexed_volume_usd` is the volume of fills in OrcaLayer's index, not
 Polymarket's figure; Smart Money counts are wallets, whatever their size.
 
+> **New (2026-11-24):** the Premium SSE stream (`/api/public/v1/live/trades`)
+> also carries fills on Polymarket's Protocol V2 markets (rolling out since
+> 2026-11-23), which the public activity feed does not: they come from our
+> indexer ~20-60 s after the block, in the same shape plus `"source": "indexer"`.
+>
 > **New (2026-07-22):** the Premium SSE stream (`/api/public/v1/live/trades`)
 > now carries `settlement_type` (`MINT` / `MERGE` / `COMPLEMENTARY` / `null`)
 > on every event — live-derived settlement mechanics, shadow-verified
