@@ -1338,6 +1338,117 @@ def resolution_events(
     }
 
 
+_PP_LADDERS = ("weekly", "monthly", "year", "daily")
+
+
+def _pp_level(x: dict) -> dict:
+    """The fields an agent needs from one /price-prediction/levels row (the API has a few more)."""
+    g, f = x.get("gap") or {}, x.get("fill") or {}
+    return {
+        "market_id": x.get("market_id"), "question": x.get("question"), "ladder": x.get("ladder"),
+        "direction": x.get("direction"), "level": x.get("level"), "deadline": x.get("deadline"),
+        "distance_pct": x.get("distance_pct"), "touched": x.get("touched"),
+        "polymarket_chance": (x.get("polymarket") or {}).get("chance"),
+        "options_chance": (x.get("options") or {}).get("chance"),
+        "options_flags": (x.get("options") or {}).get("flags"),
+        "gap": g.get("value"), "gap_usual_range": [g.get("usual_low"), g.get("usual_high")],
+        "gap_outside_usual": g.get("outside_usual"), "gap_note": g.get("note"),
+        "fill_yes": (f.get("yes") or {}).get("avg_price"), "fill_yes_thin": (f.get("yes") or {}).get("thin"),
+        "fill_no": (f.get("no") or {}).get("avg_price"), "fill_no_thin": (f.get("no") or {}).get("thin"),
+        "maker_share_24h": (x.get("volume") or {}).get("maker_share_24h"),
+        "smart_money_24h": x.get("smart_money_24h"),
+    }
+
+
+@mcp.tool(title="Bitcoin / Ethereum price levels: Polymarket vs options (Premium)",
+          annotations=_read_only("Bitcoin / Ethereum price levels: Polymarket vs options (Premium)"))
+def price_levels(
+    asset: Annotated[str, Field(description='"BTC" or "ETH".', json_schema_extra={"enum": ["BTC", "ETH"]})] = "BTC",
+    ladder: Annotated[list[str] | None, Field(description=(
+        'Any of "weekly", "monthly", "year" (by year end), "daily" (daily close). Omit for all.'))] = None,
+    direction: Annotated[str | None, Field(description='"up" (reach) or "down" (dip to). Omit for both.')] = None,
+    size_usd: Annotated[float, Field(description="Order size for the fill estimate, USD 100 to 25,000.")] = 1000,
+    limit: Annotated[int, Field(description="How many levels, 1 to 80 (larger values return 80).")] = 40,
+) -> Any:
+    """Polymarket Bitcoin or Ethereum price-level markets ("Will Bitcoin dip to
+    $55,000 by December 31?") with OrcaLayer's numbers (Premium).
+
+    For every open level: the Polymarket chance next to the chance of the same
+    touch implied by listed options, their gap (options − Polymarket) and the
+    gap's usual 10–90% range for that market, the average fill price for YES and
+    NO at your order size with a thin-book flag, the market-maker share of 24h
+    volume and Smart money buying over 24h. Chances are 0–1. When the options
+    chance is only an estimate, options_flags / gap_note say why and gap is null.
+    Updated every 15 seconds.
+
+    Needs an OrcaLayer Premium API key (hosted server: the
+    ``Authorization: Bearer <key>`` header; stdio: ORCALAYER_API_KEY).
+    Without a key the result is a short notice, not an error.
+    """
+    key = _request_api_key()
+    if not key:
+        return _premium_notice("price_levels")
+    a = str(asset or "BTC").strip().upper()
+    if a not in ("BTC", "ETH"):
+        raise ToolError('asset must be "BTC" or "ETH".')
+    lad = sorted({str(x).strip().lower() for x in (ladder or []) if str(x).strip()})
+    bad = [x for x in lad if x not in _PP_LADDERS]
+    if bad:
+        raise ToolError(f"Unknown ladder(s): {', '.join(bad)}. Accepted: {', '.join(_PP_LADDERS)}.")
+    if direction and direction not in ("up", "down"):
+        raise ToolError('direction must be "up" or "down".')
+    limit = max(1, min(int(limit), 80))
+    data = _premium_get(key, "price-prediction/levels", {
+        "asset": a, "ladder": ",".join(lad) or None, "direction": direction or None,
+        "size_usd": min(max(float(size_usd), 100.0), 25000.0)})
+    if not isinstance(data, dict) or not isinstance(data.get("levels"), list):
+        return data
+    rows = [_pp_level(x) for x in data["levels"]]
+    return {
+        "asset": a, "updated": (data.get("assets") or {}).get(a), "count": len(rows), "levels": rows[:limit],
+        "truncated": len(rows) > limit,
+        "notes": {
+            "gap": "options_chance − polymarket_chance; gap_outside_usual = today's gap is outside its usual 10–90% range.",
+            "fill": "Average price per share including Polymarket's fee for size_usd; thin = the book can't take it near the best price.",
+            "links": "Open a market at https://orcalayer.com/api/v2/pm/<market_id> (Polymarket) or the Trader view at "
+                     "https://orcalayer.com/bitcoin-price-prediction/trader.",
+            "history": "Hourly gap history for one level: the API /price-prediction/levels/<market_id>/gap-history (30 days).",
+        },
+    }
+
+
+@mcp.tool(title="Bitcoin / Ethereum price levels touched (Premium)",
+          annotations=_read_only("Bitcoin / Ethereum price levels touched (Premium)"))
+def level_hits(
+    asset: Annotated[str, Field(description='"BTC", "ETH" or "all".', json_schema_extra={"enum": ["BTC", "ETH", "all"]})] = "all",
+    since: Annotated[str | None, Field(description="ISO time: only touches after it. Omit for the newest.")] = None,
+    limit: Annotated[int, Field(description="How many, 1 to 100 (larger values return 100).")] = 20,
+) -> Any:
+    """Polymarket Bitcoin / Ethereum price levels that Binance just touched by
+    the markets' own rule (the 1-minute high or low inside the market's window),
+    newest first, with the touch time, the extreme price and how Polymarket
+    resolved the market (Premium). Polymarket usually settles such a market
+    about 12 minutes after the touch. Kept 15 days.
+
+    Needs an OrcaLayer Premium API key (hosted server: the
+    ``Authorization: Bearer <key>`` header; stdio: ORCALAYER_API_KEY).
+    Without a key the result is a short notice, not an error.
+    """
+    key = _request_api_key()
+    if not key:
+        return _premium_notice("level_hits")
+    a = str(asset or "all").strip().upper()
+    if a not in ("BTC", "ETH", "ALL"):
+        raise ToolError('asset must be "BTC", "ETH" or "all".')
+    data = _premium_get(key, "price-prediction/level-hits", {
+        "asset": a.lower() if a == "ALL" else a, "since": since or None, "limit": max(1, min(int(limit), 100))})
+    if not isinstance(data, dict) or not isinstance(data.get("hits"), list):
+        return data
+    return {"hits": data["hits"], "count": len(data["hits"]), "has_more": data.get("has_more"),
+            "notes": {"resolution": "polymarket_resolution: yes / no / pending (not settled yet) / other.",
+                      "push": "The same items can be pushed to your server: webhook event level_hit (Premium: up to 20 levels)."}}
+
+
 # ── tool list per caller (0.5.7) ─────────────────────────────────────────────
 # Viktor 07.10.2026: on the hosted server a request without a key does not see
 # the Premium tool. Claude's directory connectors carry no key header, so for
@@ -1348,7 +1459,8 @@ def resolution_events(
 # package keeps listing it, with the notice, so local users can find Premium.
 # A keyless call by name still returns the notice (the SDK only logs "not
 # listed"; FastMCP registers call_tool without input validation).
-_PREMIUM_TOOLS = frozenset({"whale_alerts", "pnl_leaderboard", "resolution_events"})  # 0.5.11: + the two plan tools
+_PREMIUM_TOOLS = frozenset({"whale_alerts", "pnl_leaderboard", "resolution_events",  # 0.5.11: + the two plan tools
+                            "price_levels", "level_hits"})  # 0.5.24 (26.11.2026): price prediction
 _HIDE_PREMIUM_WITHOUT_KEY = False  # main() sets it for --http
 
 
@@ -1556,7 +1668,7 @@ read endpoints (wallet profiles, market search, leaderboard) need no key.
 
 ## Rate limits
 - Anonymous public: 200 requests/minute per IP (plus Cloudflare throttling).
-- Premium API key: 600 requests/minute (sliding 60s window, no daily cap).
+- Premium API key: 600 requests/minute (sliding 60s window); accounts created after 1 October 2026 also have 25,000 requests/day.
 Every response carries X-RateLimit-* headers.
 
 ## Real-time feed

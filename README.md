@@ -36,8 +36,10 @@ Python SDK and exposes eight read-only tools:
 | `whale_alerts` | Real-time alerts on profitable wallets: live feed of smart-whale trades | Premium |
 | `pnl_leaderboard` | Wallets ranked by realized P&L over the last 7 or 30 days (any window since June 2026) | Premium |
 | `resolution_events` | Markets just proposed, disputed, resolved (with the winner) or reopened | Premium |
+| `price_levels` | Bitcoin / Ethereum price levels: Polymarket chance vs options, gap and its usual range, fill at your size, maker share | Premium |
+| `level_hits` | Bitcoin / Ethereum price levels Binance just touched, with the Polymarket resolution | Premium |
 
-Public tools work anonymously. `whale_alerts`, `pnl_leaderboard` and `resolution_events` need a Premium API key
+Public tools work anonymously. `whale_alerts`, `pnl_leaderboard`, `resolution_events`, `price_levels` and `level_hits` need a Premium API key
 ([get one](https://orcalayer.com/pricing)): on the hosted server send it as the
 `Authorization: Bearer <key>` request header (clients that support request
 headers for a connector), on the local server set the `ORCALAYER_API_KEY`
@@ -109,7 +111,7 @@ Add this to your `claude_desktop_config.json`
 }
 ```
 
-The public tools work as-is. For the Premium tools (`whale_alerts`, `pnl_leaderboard`, `resolution_events`), add your
+The public tools work as-is. For the Premium tools (`whale_alerts`, `pnl_leaderboard`, `resolution_events`, `price_levels`, `level_hits`), add your
 API key ([get one](https://orcalayer.com/pricing)):
 
 ```json
@@ -128,7 +130,7 @@ Restart Claude Desktop after editing the config.
 
 ## Use the hosted server
 
-The same eight tools, prompts and resources are served at
+The same ten tools, prompts and resources are served at
 `https://orcalayer.com/mcp` over Streamable HTTP. No account is needed for the
 public tools. In Claude: Settings → Connectors → Add custom connector → paste
 the URL. For the Premium tools, send your Premium key as the

@@ -34,7 +34,7 @@
       },
       "environmentVariables": [
         {
-          "description": "Optional Premium API key from orcalayer.com/pricing: adds the whale_alerts, pnl_leaderboard and resolution_events tools. Public tools work without it.",
+          "description": "Optional Premium API key from orcalayer.com/pricing: adds the whale_alerts, pnl_leaderboard, resolution_events, price_levels and level_hits tools. Public tools work without it.",
           "isRequired": false,
           "format": "string",
           "isSecret": true,
