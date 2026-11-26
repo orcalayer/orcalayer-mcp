@@ -1341,7 +1341,7 @@ def resolution_events(
     }
 
 
-_PP_LADDERS = ("weekly", "monthly", "year", "daily")
+_PP_LADDERS = ("weekly", "monthly", "year", "daily", "daily_touch")   # 0.5.26: + daily_touch («reach / dip to $X on <day>»)
 
 
 def _pp_level(x: dict) -> dict:
@@ -1368,7 +1368,8 @@ def _pp_level(x: dict) -> dict:
 def price_levels(
     asset: Annotated[str, Field(description='"BTC" or "ETH".', json_schema_extra={"enum": ["BTC", "ETH"]})] = "BTC",
     ladder: Annotated[list[str] | None, Field(description=(
-        'Any of "weekly", "monthly", "year" (by year end), "daily" (daily close). Omit for all.'))] = None,
+        'Any of "weekly", "monthly", "year" (by year end), "daily" (daily close), "daily_touch" '
+        '(reach / dip to a level on one day). Omit for all.'))] = None,
     direction: Annotated[str | None, Field(description='"up" (reach) or "down" (dip to). Omit for both.')] = None,
     size_usd: Annotated[float, Field(description="Order size for the fill estimate, USD 100 to 25,000.")] = 1000,
     limit: Annotated[int, Field(description="How many levels, 1 to 80 (larger values return 80).")] = 40,
