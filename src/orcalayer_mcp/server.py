@@ -58,8 +58,11 @@ mcp = FastMCP(
         "versus its price (market_consensus). Requests that carry an OrcaLayer "
         "Premium API key also get recent trades by Smart Money wallets "
         "(whale_alerts), the realized PnL ranking over 7 or 30 days "
-        "(pnl_leaderboard) and markets just proposed, disputed, resolved or "
-        "reopened (resolution_events). Prompts hold ready-made analyses; resources hold the "
+        "(pnl_leaderboard), markets just proposed, disputed, resolved or "
+        "reopened (resolution_events), Bitcoin and Ethereum price levels on "
+        "Polymarket versus the options-implied chance with the fill at your size "
+        "(price_levels) and the levels Binance just touched with how Polymarket "
+        "resolved them (level_hits). Prompts hold ready-made analyses; resources hold the "
         "classification methodology, a glossary and the REST API reference."
     ),
 )
